@@ -448,16 +448,9 @@ async function loadChartHistory(months) {
         if (data.length > 0) {
             const currentPrice = state.meta?.regularMarketPrice ?? data[data.length - 1].close;
             const srLevels = analyzeSupportResistance(data, currentPrice);
-            
-            // 三合一波段策略
-            const strategyData = analyzeTripleConfirmation(data);
-            
-            renderChart(data, srLevels, strategyData);
+            renderChart(data, srLevels);
             renderSRPanel(srLevels, currentPrice);
-            renderSignalPanel(strategyData);
-            
             show('srSection');
-            show('signalSection');
         } else {
             document.getElementById('klineChart').innerHTML =
                 '<p style="color:var(--text-muted);text-align:center;padding:60px 0">暫無歷史資料</p>';
@@ -569,195 +562,8 @@ function renderSRPanel(levels, currentPrice) {
         </div>`;
 }
 
-// ===== Trading Signals & Backtesting (SMC Upgrade) =====
-function calcRSI(period, closingPrices) {
-    if (closingPrices.length < period) return new Array(closingPrices.length).fill(null);
-    let rsi = new Array(closingPrices.length).fill(null);
-    let gains = 0, losses = 0;
-
-    for (let i = 1; i <= period; i++) {
-        let diff = closingPrices[i] - closingPrices[i - 1];
-        if (diff >= 0) gains += diff; else losses -= diff;
-    }
-    let avgGain = gains / period;
-    let avgLoss = losses / period;
-    if (avgLoss === 0) rsi[period] = 100;
-    else rsi[period] = 100 - (100 / (1 + avgGain / avgLoss));
-
-    for (let i = period + 1; i < closingPrices.length; i++) {
-        let diff = closingPrices[i] - closingPrices[i - 1];
-        let gain = diff >= 0 ? diff : 0;
-        let loss = diff < 0 ? -diff : 0;
-        avgGain = (avgGain * (period - 1) + gain) / period;
-        avgLoss = (avgLoss * (period - 1) + loss) / period;
-        if (avgLoss === 0) rsi[i] = 100;
-        else rsi[i] = 100 - (100 / (1 + avgGain / avgLoss));
-    }
-    return rsi;
-}
-
-function calcEMA(period, prices) {
-    if (prices.length < period) return new Array(prices.length).fill(null);
-    let ema = new Array(prices.length).fill(null);
-    let k = 2 / (period + 1);
-    let sum = 0;
-    for (let i = 0; i < period; i++) sum += prices[i];
-    ema[period - 1] = sum / period;
-    for (let i = period; i < prices.length; i++) {
-        ema[i] = (prices[i] - ema[i - 1]) * k + ema[i - 1];
-    }
-    return ema;
-}
-
-function calcMACD(prices) {
-    if (prices.length < 26) return { dif: [], dea: [], osc: [] };
-    const ema12 = calcEMA(12, prices);
-    const ema26 = calcEMA(26, prices);
-    const dif = ema12.map((e12, i) => (e12 && ema26[i]) ? e12 - ema26[i] : null);
-    const difValid = dif.filter(d => d !== null);
-    const deaValid = calcEMA(9, difValid);
-    const dea = new Array(dif.length).fill(null);
-    let deaIdx = 0;
-    for (let i = 0; i < dif.length; i++) {
-        if (dif[i] !== null) dea[i] = deaValid[deaIdx++];
-    }
-    const osc = dif.map((d, i) => (d !== null && dea[i] !== null) ? d - dea[i] : null);
-    return { dif, dea, osc };
-}
-
-function runTripleBacktest(data, ma5, ma10, ma20, ma60, macd) {
-    let balance = 1000000;
-    let initialBalance = 1000000;
-    let position = null; // { entryPrice, sl, shares, isHalfSold }
-    let trades = 0;
-    const feeRate = 0.003; 
-
-    for (let i = 60; i < data.length; i++) {
-        const d = data[i];
-        const cp = d.close;
-
-        if (position) {
-            // A. 停損 (-7% 或 跌破紅K低點)
-            if (cp < position.sl || cp < position.entryPrice * 0.93) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            } 
-            // B. 第一階段減碼 (50% 跌破 10MA)
-            else if (!position.isHalfSold && cp < ma10[i]) {
-                const sellShares = Math.floor(position.shares / 2);
-                balance += sellShares * cp * (1 - feeRate);
-                position.shares -= sellShares;
-                position.isHalfSold = true;
-            }
-            // C. 第二階段清倉 (跌破 20MA)
-            else if (cp < ma20[i]) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            }
-            // D. 乖離停利 (5MA-20MA > 20% + 上影線)
-            else if ((ma5[i] - ma20[i]) / ma20[i] > 0.22 && (d.high - d.close) > (d.close - d.open)) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            }
-        } else {
-            // 進場邏輯
-            const m5 = ma5[i], m10 = ma10[i], m20 = ma20[i];
-            const coiling = (Math.max(m5, m10, m20) - Math.min(m5, m10, m20)) / Math.min(m5, m10, m20) < 0.035;
-            const aboveAll = cp > m5 && cp > m10 && cp > m20 && cp > ma60[i];
-            const isRed = d.close > d.open;
-            const bodyPct = (d.close - d.open) / d.open > 0.03;
-            const avgVol5 = data.slice(i-5, i).reduce((s,x)=>s+x.volume, 0) / 5;
-            const last10High = Math.max(...data.slice(i-10, i).map(x=>x.high));
-            
-            if (coiling && aboveAll && isRed && bodyPct && d.volume > avgVol5 * 1.8 && d.close > last10High && macd.dif[i] > 0) {
-                const shares = Math.floor((balance * 0.95) / cp);
-                if (shares > 0) {
-                    balance -= shares * cp * (1 + feeRate);
-                    position = { entryPrice: cp, sl: d.low, shares: shares, isHalfSold: false };
-                }
-            }
-        }
-    }
-
-    const finalValue = position ? balance + (position.shares * data[data.length-1].close * (1 - feeRate)) : balance;
-    const totalReturn = ((finalValue - initialBalance) / initialBalance) * 100;
-    return { totalReturn: totalReturn.toFixed(1), trades };
-}
-
-function analyzeTripleConfirmation(data) {
-    const closes = data.map(d => d.close);
-    const volumes = data.map(d => d.volume);
-    
-    const ma5 = calcMA(5, closes);
-    const ma10 = calcMA(10, closes);
-    const ma20 = calcMA(20, closes);
-    const ma60 = calcMA(60, closes);
-    const macd = calcMACD(closes);
-    
-    const backtest = runTripleBacktest(data, ma5, ma10, ma20, ma60, macd);
-    const signals = [];
-
-    for (let i = data.length - 30; i < data.length; i++) {
-        if (i < 60) continue;
-        const d = data[i];
-        const avgVol5 = volumes.slice(i-5, i).reduce((a,b)=>a+b, 0) / 5;
-        const last10High = Math.max(...data.slice(i-10, i).map(x=>x.high));
-        
-        if (d.close > d.open && (d.close-d.open)/d.open > 0.03 && d.volume > avgVol5 * 1.8 && d.close > last10High && macd.dif[i] > 0) {
-            signals.push({ date: d.date, type: 'Triple Entry', price: d.high, sl: d.low });
-        }
-        if (i > 0 && closes[i-1] > ma20[i-1] && d.close < ma20[i]) {
-            signals.push({ date: d.date, type: 'Exit All', price: d.low, desc: '破 20MA' });
-        }
-    }
-
-    const cp = closes[closes.length-1];
-    let bias = '整理中';
-    let desc = '待爆量突破';
-    const lastSig = signals.filter(s => s.type === 'Triple Entry').pop();
-    if (lastSig) {
-        bias = '波段進場';
-        desc = `回測預期報酬: ${backtest.totalReturn}% | 停損: ${lastSig.sl}`;
-    }
-
-    return { 
-        bias, desc, signals, currentPrice: cp, 
-        currentRsi: calcRSI(14, closes).pop(),
-        ma5, ma10, ma20, ma60, macd, backtest
-    };
-}
-
-function analyzeSMC(data) { return null; }
-
-function renderSignalPanel(strategy) {
-    const card = document.getElementById('signalCard');
-    const valEl = document.getElementById('signalValue');
-    const descEl = document.getElementById('signalDesc');
-    const bt = strategy.backtest;
-    
-    valEl.textContent = strategy.bias;
-    descEl.textContent = strategy.desc;
-    
-    card.className = 'signal-card';
-    if (strategy.bias.includes('進場')) card.classList.add('bullish');
-    
-    // 總報酬率與交易次數
-    setText('btWinRate', `${bt.totalReturn}%`);
-    setText('btReturn', `交易 ${bt.trades} 次`);
-    
-    // 狀態
-    const osc = strategy.macd.osc[strategy.macd.osc.length-1] || 0;
-    setText('btTrades', osc > 0 ? 'OSC 多方佔優' : 'OSC 整理中');
-    
-    const rsiText = strategy.currentRsi ? `${strategy.currentRsi.toFixed(1)}` : '--';
-    setText('rsiValue', rsiText);
-}
-
 // ===== Render K-line Chart =====
-function renderChart(data, srLevels = { supports: [], resistances: [] }, strategy = null) {
+function renderChart(data, srLevels = { supports: [], resistances: [] }) {
     const chartEl = document.getElementById('klineChart');
     if (!state.chart) {
         state.chart = echarts.init(chartEl, 'dark');
@@ -768,11 +574,8 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
     const kline  = data.map(d => [d.open, d.close, d.low, d.high]);
     const vols   = data.map(d => d.volume);
     const closes = data.map(d => d.close);
-    
-    const ma5    = strategy?.ma5  ?? calcMA(5, closes);
-    const ma10   = strategy?.ma10 ?? calcMA(10, closes);
-    const ma20   = strategy?.ma20 ?? calcMA(20, closes);
-    const ma60   = strategy?.ma60 ?? calcMA(60, closes);
+    const ma5    = calcMA(5, closes);
+    const ma20   = calcMA(20, closes);
 
     state.chart.setOption({
         backgroundColor: '#1e293b',
@@ -783,6 +586,28 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
             backgroundColor: '#0f172a',
             borderColor: '#334155',
             textStyle: { color: '#f1f5f9', fontSize: 12 },
+            formatter(params) {
+                const cd  = params.find(p => p.seriesName === 'K線');
+                const v   = params.find(p => p.seriesName === '成交量');
+                const m5  = params.find(p => p.seriesName === 'MA5');
+                const m20 = params.find(p => p.seriesName === 'MA20');
+                if (!cd) return '';
+                const [o, c, l, h] = cd.data;
+                const chg = (c - o).toFixed(2);
+                const color = c >= o ? '#ef4444' : '#22c55e';
+                return `
+                    <div style="min-width:145px">
+                        <div style="color:#94a3b8;margin-bottom:6px">${dates[cd.dataIndex]}</div>
+                        <div>開 <b style="color:${color};float:right;margin-left:12px">${o}</b></div>
+                        <div>高 <b style="color:#ef4444;float:right;margin-left:12px">${h}</b></div>
+                        <div>低 <b style="color:#22c55e;float:right;margin-left:12px">${l}</b></div>
+                        <div>收 <b style="color:${color};float:right;margin-left:12px">${c}</b></div>
+                        <div style="color:${color}">漲跌 <b style="float:right">${c >= o ? '+' : ''}${chg}</b></div>
+                        ${v ? `<div style="color:#94a3b8">量 <span style="float:right">${v.data?.toLocaleString()} 張</span></div>` : ''}
+                        ${m5?.data && m5.data !== '-' ? `<div style="color:#f59e0b">MA5 <span style="float:right">${m5.data}</span></div>` : ''}
+                        ${m20?.data && m20.data !== '-' ? `<div style="color:#a78bfa">MA20 <span style="float:right">${m20.data}</span></div>` : ''}
+                    </div>`;
+            }
         },
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
         grid: [
@@ -790,30 +615,58 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
             { left: 60, right: 20, top: '72%', bottom: 80 },
         ],
         xAxis: [
-            { type: 'category', data: dates, gridIndex: 0, scale: true, boundaryGap: false },
-            { type: 'category', data: dates, gridIndex: 1, scale: true, boundaryGap: false },
+            {
+                type: 'category', data: dates, gridIndex: 0,
+                scale: true, boundaryGap: false,
+                axisLine: { lineStyle: { color: '#334155' } },
+                axisTick: { show: false }, axisLabel: { show: false },
+                splitLine: { show: false },
+            },
+            {
+                type: 'category', data: dates, gridIndex: 1,
+                scale: true, boundaryGap: false,
+                axisLine: { lineStyle: { color: '#334155' } },
+                axisLabel: { color: '#64748b', fontSize: 11, formatter: v => v.slice(5) },
+                axisTick: { lineStyle: { color: '#334155' } },
+                splitLine: { show: false },
+            },
         ],
         yAxis: [
-            { scale: true, gridIndex: 0 },
-            { scale: true, gridIndex: 1, splitNumber: 2 },
+            {
+                scale: true, gridIndex: 0,
+                splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,0.01)', 'rgba(0,0,0,0)'] } },
+                axisLabel: { color: '#64748b', fontSize: 11 },
+                axisLine: { show: false }, axisTick: { show: false },
+                splitLine: { lineStyle: { color: '#243447' } },
+            },
+            {
+                scale: true, gridIndex: 1, splitNumber: 2,
+                axisLabel: {
+                    color: '#64748b', fontSize: 10,
+                    formatter: v => v >= 10000 ? (v / 10000).toFixed(0) + 'w' : String(v),
+                },
+                axisLine: { show: false }, axisTick: { show: false },
+                splitLine: { lineStyle: { color: '#243447' } },
+            },
         ],
         dataZoom: [
             { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-            { type: 'slider', xAxisIndex: [0, 1], bottom: 16, height: 24, start: 0, end: 100 },
+            {
+                type: 'slider', xAxisIndex: [0, 1],
+                bottom: 16, height: 24, start: 0, end: 100,
+                backgroundColor: '#1e293b', borderColor: '#334155',
+                fillerColor: 'rgba(59,130,246,0.15)',
+                handleStyle: { color: '#3b82f6' },
+                textStyle: { color: '#64748b', fontSize: 10 },
+            },
         ],
         series: [
             {
                 name: 'K線', type: 'candlestick',
                 xAxisIndex: 0, yAxisIndex: 0, data: kline,
-                itemStyle: { color: '#ef4444', color0: '#22c55e', borderColor: '#ef4444', borderColor0: '#22c55e' },
-                markPoint: {
-                    symbolSize: 12,
-                    data: (strategy?.signals ?? []).map(s => ({
-                        name: s.type, coord: [s.date, s.price],
-                        value: s.type === 'Triple Entry' ? '買' : '賣',
-                        itemStyle: { color: s.type === 'Triple Entry' ? '#ef4444' : '#22c55e' },
-                        label: { fontSize: 10, position: 'top', color: '#fff' }
-                    }))
+                itemStyle: {
+                    color: '#ef4444', color0: '#22c55e',
+                    borderColor: '#ef4444', borderColor0: '#22c55e',
                 },
                 markLine: {
                     symbol: 'none', silent: true, animation: false,
@@ -823,12 +676,21 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
                     ],
                 },
             },
-            { name: 'MA5', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma5, smooth: false, symbol: 'none', lineStyle: { color: '#f59e0b', width: 1 } },
-            { name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma10, smooth: false, symbol: 'none', lineStyle: { color: '#22d3ee', width: 1 } },
-            { name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma20, smooth: false, symbol: 'none', lineStyle: { color: '#a78bfa', width: 1.2 } },
-            { name: 'MA60', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: ma60, smooth: false, symbol: 'none', lineStyle: { color: '#6366f1', width: 1.5, type: 'dashed' } },
             {
-                name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols,
+                name: 'MA5', type: 'line',
+                xAxisIndex: 0, yAxisIndex: 0, data: ma5,
+                smooth: false, symbol: 'none', z: 3,
+                lineStyle: { color: '#f59e0b', width: 1.2 },
+            },
+            {
+                name: 'MA20', type: 'line',
+                xAxisIndex: 0, yAxisIndex: 0, data: ma20,
+                smooth: false, symbol: 'none', z: 3,
+                lineStyle: { color: '#a78bfa', width: 1.2 },
+            },
+            {
+                name: '成交量', type: 'bar',
+                xAxisIndex: 1, yAxisIndex: 1, data: vols,
                 itemStyle: { color: p => data[p.dataIndex].close >= data[p.dataIndex].open ? 'rgba(239,68,68,0.7)' : 'rgba(34,197,94,0.7)' },
             },
         ],
