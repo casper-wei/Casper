@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股查詢</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="header-inner">
+                <h1>台股查詢 <span class="subtitle">Taiwan Stock</span></h1>
+                <div class="market-status" id="marketStatus"></div>
+            </div>
+        </header>
+
+        <div class="search-section">
+            <div class="search-bar">
+                <div class="input-wrapper">
+                    <input
+                        type="text"
+                        id="stockInput"
+                        placeholder="輸入代號（2330）或中文名稱（台積電）"
+                        autocomplete="off"
+                    />
+                    <div class="autocomplete-dropdown hidden" id="autocompleteList"></div>
+                </div>
+                <button id="searchBtn" onclick="handleSearch()">查詢</button>
+            </div>
+            <div class="quick-links">
+                <span>熱門：</span>
+                <button class="quick-btn" onclick="quickSearch('2330')">2330 台積電</button>
+                <button class="quick-btn" onclick="quickSearch('0050')">0050 台灣50</button>
+                <button class="quick-btn" onclick="quickSearch('2317')">2317 鴻海</button>
+                <button class="quick-btn" onclick="quickSearch('2454')">2454 聯發科</button>
+            </div>
+        </div>
+
+        <div id="errorMsg" class="error-msg hidden"></div>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>查詢中...</p>
+        </div>
+
+        <div id="result" class="hidden">
+            <div class="tabs">
+                <button class="tab active" id="tabRealtime" onclick="switchTab('realtime')">
+                    <span class="tab-dot" id="realtimeDot"></span>即時報價
+                </button>
+                <button class="tab" id="tabAfterHours" onclick="switchTab('afterhours')">盤後資料</button>
+            </div>
+
+            <!-- Quote Card -->
+            <div class="quote-card" id="quoteCard">
+                <div class="quote-header">
+                    <div class="stock-info">
+                        <span class="stock-code" id="stockCode"></span>
+                        <span class="stock-name" id="stockName"></span>
+                        <span class="market-badge" id="marketBadge"></span>
+                    </div>
+                    <div class="update-time" id="updateTime"></div>
+                </div>
+
+                <div class="price-section">
+                    <div class="current-price" id="currentPrice">--</div>
+                    <div class="change-info" id="changeInfo">
+                        <span class="change-val" id="changeVal">--</span>
+                        <span class="change-pct" id="changePct">--</span>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">開盤</div>
+                        <div class="stat-value" id="openPrice">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">最高</div>
+                        <div class="stat-value up" id="highPrice">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">最低</div>
+                        <div class="stat-value down" id="lowPrice">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">昨收</div>
+                        <div class="stat-value" id="prevClose">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">成交量</div>
+                        <div class="stat-value" id="volume">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">漲停</div>
+                        <div class="stat-value up" id="upperLimit">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">跌停</div>
+                        <div class="stat-value down" id="lowerLimit">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">成交日期</div>
+                        <div class="stat-value" id="tradeDate">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart Section -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <span class="chart-title">K線圖（近6個月）</span>
+                    <div class="chart-controls">
+                        <button class="period-btn active" onclick="changePeriod(3, this)">3個月</button>
+                        <button class="period-btn" onclick="changePeriod(6, this)">6個月</button>
+                    </div>
+                    <div class="chart-loading" id="chartLoading">
+                        <div class="spinner-small"></div>
+                    </div>
+                </div>
+                <div id="klineChart"></div>
+                <div class="chart-legend">
+                    <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>漲</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>跌</span>
+                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:4px"></span>MA5</span>
+                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#a78bfa;vertical-align:middle;margin-right:4px"></span>MA20</span>
+                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#ef4444;opacity:.6;border-top:2px dashed #ef4444;vertical-align:middle;margin-right:4px"></span>壓力</span>
+                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#22c55e;opacity:.6;border-top:2px dashed #22c55e;vertical-align:middle;margin-right:4px"></span>支撐</span>
+                </div>
+            </div>
+
+            <!-- Support / Resistance Panel -->
+            <div class="sr-section hidden" id="srSection">
+                <div class="sr-header">
+                    <span class="sr-title">支撐壓力分析</span>
+                    <span class="sr-method">基於近期擺動高低點（Swing High/Low）聚類分析</span>
+                </div>
+                <div class="sr-body" id="srBody"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
