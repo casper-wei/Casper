@@ -449,15 +449,10 @@ async function loadChartHistory(months) {
             const currentPrice = state.meta?.regularMarketPrice ?? data[data.length - 1].close;
             const srLevels = analyzeSupportResistance(data, currentPrice);
             
-            // 三合一波段策略
-            const strategyData = analyzeTripleConfirmation(data);
-            
-            renderChart(data, srLevels, strategyData);
+            renderChart(data, srLevels);
             renderSRPanel(srLevels, currentPrice);
-            renderSignalPanel(strategyData);
             
             show('srSection');
-            show('signalSection');
         } else {
             document.getElementById('klineChart').innerHTML =
                 '<p style="color:var(--text-muted);text-align:center;padding:60px 0">暫無歷史資料</p>';
@@ -569,195 +564,260 @@ function renderSRPanel(levels, currentPrice) {
         </div>`;
 }
 
-// ===== Trading Signals & Backtesting (SMC Upgrade) =====
-function calcRSI(period, closingPrices) {
-    if (closingPrices.length < period) return new Array(closingPrices.length).fill(null);
-    let rsi = new Array(closingPrices.length).fill(null);
-    let gains = 0, losses = 0;
 
-    for (let i = 1; i <= period; i++) {
-        let diff = closingPrices[i] - closingPrices[i - 1];
-        if (diff >= 0) gains += diff; else losses -= diff;
-    }
-    let avgGain = gains / period;
-    let avgLoss = losses / period;
-    if (avgLoss === 0) rsi[period] = 100;
-    else rsi[period] = 100 - (100 / (1 + avgGain / avgLoss));
+// ===== Stock Screener =====
+let screenerRunning = false;
 
-    for (let i = period + 1; i < closingPrices.length; i++) {
-        let diff = closingPrices[i] - closingPrices[i - 1];
-        let gain = diff >= 0 ? diff : 0;
-        let loss = diff < 0 ? -diff : 0;
-        avgGain = (avgGain * (period - 1) + gain) / period;
-        avgLoss = (avgLoss * (period - 1) + loss) / period;
-        if (avgLoss === 0) rsi[i] = 100;
-        else rsi[i] = 100 - (100 / (1 + avgGain / avgLoss));
+async function runScreener() {
+    if (screenerRunning) return;
+    screenerRunning = true;
+
+    const btn = document.getElementById('screenerBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="screener-btn-icon">⏳</span> 掃描中...';
+
+    document.getElementById('screenerProgress').classList.remove('hidden');
+    document.getElementById('screenerResults').classList.add('hidden');
+    updateProgress(0, '📡 Phase 1：連線取得全市場資料...');
+
+    // ── Phase 1：從 TWSE / TPEx Open API 拉取今日全市場行情 ──
+    let allStocks = [];
+    const [twseRes, tpexRes] = await Promise.allSettled([
+        fetchMarketSnapshot('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', '.TW'),
+        fetchMarketSnapshot('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', '.TWO'),
+    ]);
+    if (twseRes.status === 'fulfilled') allStocks.push(...twseRes.value);
+    if (tpexRes.status === 'fulfilled') allStocks.push(...tpexRes.value);
+
+    // 若 API 完全取不到，降級為 STOCK_DB
+    if (!allStocks.length) {
+        allStocks = Object.entries(STOCK_DB)
+            .filter(([, [, t]]) => t !== 'ETF')
+            .map(([code, [name, t]]) => ({
+                code, name, suffix: t === '上市' ? '.TW' : '.TWO',
+                open: null, close: null, high: null, low: null, volume: null,
+            }));
     }
-    return rsi;
+
+    const totalScanned = allStocks.length;
+    updateProgress(10, `✅ 取得 ${totalScanned} 支個股（上市＋上櫃）`);
+    await sleep(200);
+
+    // ── Phase 2：本地初篩——長紅K棒 ≥ 3% ──
+    let candidates = allStocks.filter(s =>
+        s.open > 0 && s.close > s.open &&
+        (s.close - s.open) / s.open >= 0.03
+    );
+    // 若市場 API 資料有缺失（非交易時段），候選清單可能為空 → 用全部
+    if (!candidates.length) candidates = allStocks.filter(s => s.code);
+
+    updateProgress(15, `🔍 長紅K棒初篩後剩 ${candidates.length} 支，開始深度分析...`);
+    await sleep(150);
+
+    // ── Phase 3：Yahoo Finance 深度核查（量比、突破、均線）──
+    const results = [];
+    const deepTotal = candidates.length;
+    const BATCH = 5;
+
+    for (let i = 0; i < deepTotal; i += BATCH) {
+        const batch = candidates.slice(i, i + BATCH);
+        const batchRes = await Promise.all(
+            batch.map(s => screenerDeepCheck(s))
+        );
+        for (const r of batchRes) { if (r) results.push(r); }
+
+        const done = Math.min(i + BATCH, deepTotal);
+        const pct  = 15 + Math.round((done / deepTotal) * 85);
+        updateProgress(pct,
+            `🔬 深度分析 ${done} / ${deepTotal}，符合 ${results.length} 支...`);
+
+        if (i + BATCH < deepTotal) await sleep(280);
+    }
+
+    updateProgress(100,
+        `🎯 掃描完成！全市場 ${totalScanned} 支 → 初篩 ${deepTotal} 支 → 符合 ${results.length} 支`);
+
+    results.sort((a, b) => b.hitCount - a.hitCount || b.changePct - a.changePct);
+    renderScreenerResults(results, totalScanned, deepTotal);
+
+    btn.disabled = false;
+    btn.innerHTML = '<span class="screener-btn-icon">🔄</span> 重新掃描';
+    screenerRunning = false;
 }
 
-function calcEMA(period, prices) {
-    if (prices.length < period) return new Array(prices.length).fill(null);
-    let ema = new Array(prices.length).fill(null);
-    let k = 2 / (period + 1);
-    let sum = 0;
-    for (let i = 0; i < period; i++) sum += prices[i];
-    ema[period - 1] = sum / period;
-    for (let i = period; i < prices.length; i++) {
-        ema[i] = (prices[i] - ema[i - 1]) * k + ema[i - 1];
-    }
-    return ema;
+function updateProgress(pct, text) {
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent = text;
 }
 
-function calcMACD(prices) {
-    if (prices.length < 26) return { dif: [], dea: [], osc: [] };
-    const ema12 = calcEMA(12, prices);
-    const ema26 = calcEMA(26, prices);
-    const dif = ema12.map((e12, i) => (e12 && ema26[i]) ? e12 - ema26[i] : null);
-    const difValid = dif.filter(d => d !== null);
-    const deaValid = calcEMA(9, difValid);
-    const dea = new Array(dif.length).fill(null);
-    let deaIdx = 0;
-    for (let i = 0; i < dif.length; i++) {
-        if (dif[i] !== null) dea[i] = deaValid[deaIdx++];
+// 取得單一市場快照（TWSE 或 TPEx）
+async function fetchMarketSnapshot(url, suffix) {
+    let raw;
+    try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+        raw = await res.json();
+    } catch {
+        try {
+            const res = await fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+            raw = await res.json();
+        } catch { return []; }
     }
-    const osc = dif.map((d, i) => (d !== null && dea[i] !== null) ? d - dea[i] : null);
-    return { dif, dea, osc };
+
+    const rows = Array.isArray(raw) ? raw : (raw.data || raw.aaData || []);
+    const stocks = [];
+    for (const row of rows) {
+        const s = parseMarketRow(row, suffix);
+        if (s) stocks.push(s);
+    }
+    return stocks;
 }
 
-function runTripleBacktest(data, ma5, ma10, ma20, ma60, macd) {
-    let balance = 1000000;
-    let initialBalance = 1000000;
-    let position = null; // { entryPrice, sl, shares, isHalfSold }
-    let trades = 0;
-    const feeRate = 0.003; 
+// 解析單列行情，相容 TWSE / TPEx 兩種欄位命名
+function parseMarketRow(row, suffix) {
+    const code = (
+        row.Code || row['代號'] || row.SecuritiesCompanyCode || ''
+    ).toString().trim();
 
-    for (let i = 60; i < data.length; i++) {
-        const d = data[i];
-        const cp = d.close;
+    // 只保留 4 位數字個股，排除 ETF（代碼起頭 0）
+    if (!code || !/^\d{4}$/.test(code) || code.startsWith('0')) return null;
 
-        if (position) {
-            // A. 停損 (-7% 或 跌破紅K低點)
-            if (cp < position.sl || cp < position.entryPrice * 0.93) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            } 
-            // B. 第一階段減碼 (50% 跌破 10MA)
-            else if (!position.isHalfSold && cp < ma10[i]) {
-                const sellShares = Math.floor(position.shares / 2);
-                balance += sellShares * cp * (1 - feeRate);
-                position.shares -= sellShares;
-                position.isHalfSold = true;
-            }
-            // C. 第二階段清倉 (跌破 20MA)
-            else if (cp < ma20[i]) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            }
-            // D. 乖離停利 (5MA-20MA > 20% + 上影線)
-            else if ((ma5[i] - ma20[i]) / ma20[i] > 0.22 && (d.high - d.close) > (d.close - d.open)) {
-                balance += position.shares * cp * (1 - feeRate);
-                position = null;
-                trades++;
-            }
-        } else {
-            // 進場邏輯
-            const m5 = ma5[i], m10 = ma10[i], m20 = ma20[i];
-            const coiling = (Math.max(m5, m10, m20) - Math.min(m5, m10, m20)) / Math.min(m5, m10, m20) < 0.035;
-            const aboveAll = cp > m5 && cp > m10 && cp > m20 && cp > ma60[i];
-            const isRed = d.close > d.open;
-            const bodyPct = (d.close - d.open) / d.open > 0.03;
-            const avgVol5 = data.slice(i-5, i).reduce((s,x)=>s+x.volume, 0) / 5;
-            const last10High = Math.max(...data.slice(i-10, i).map(x=>x.high));
-            
-            if (coiling && aboveAll && isRed && bodyPct && d.volume > avgVol5 * 1.8 && d.close > last10High && macd.dif[i] > 0) {
-                const shares = Math.floor((balance * 0.95) / cp);
-                if (shares > 0) {
-                    balance -= shares * cp * (1 + feeRate);
-                    position = { entryPrice: cp, sl: d.low, shares: shares, isHalfSold: false };
-                }
+    const name = (
+        row.Name || row['名稱'] || row.CompanyName || row['公司名稱'] || code
+    ).toString().trim();
+
+    const toNum = v => parseFloat((v || '0').toString().replace(/,/g, ''));
+    const open   = toNum(row.OpeningPrice  || row.Open  || row['開盤'] || row['開盤價']);
+    const close  = toNum(row.ClosingPrice  || row.Close || row['收盤'] || row['收盤價']);
+    const high   = toNum(row.HighestPrice  || row.High  || row['最高'] || row['最高價']);
+    const low    = toNum(row.LowestPrice   || row.Low   || row['最低'] || row['最低價']);
+    const volRaw = (row.TradeVolume || row['成交量'] || row['成交股數(千股)'] || '0')
+                    .toString().replace(/,/g, '');
+
+    if (isNaN(close) || close <= 0) return null;
+
+    // 上市 TradeVolume 單位：股 → 除以 1000 = 張
+    // 上櫃 若欄位為「成交股數(千股)」則已是千股 = 張
+    const isKiloshares = !!(row['成交股數(千股)']);
+    const volume = isKiloshares
+        ? Math.round(parseFloat(volRaw))
+        : Math.round(parseFloat(volRaw) / 1000);
+
+    return { code, name, suffix, open, close, high, low, volume };
+}
+
+// Yahoo Finance 深度核查（條件 2、3、4；若今日市場資料有效也核查條件 1）
+async function screenerDeepCheck(stockInfo) {
+    const { code, name, suffix } = stockInfo;
+    try {
+        const data = await fetchYahooHistory(code + suffix, 2);
+        if (data.length < 22) return null;
+
+        // 用市場 API 資料覆蓋最後一根（更即時），若價格落差 < 5% 才採用
+        if (stockInfo.close > 0 && stockInfo.open > 0) {
+            const last = data[data.length - 1];
+            if (Math.abs(last.close - stockInfo.close) / last.close < 0.05) {
+                data[data.length - 1] = {
+                    ...last,
+                    open:   stockInfo.open,
+                    close:  stockInfo.close,
+                    high:   stockInfo.high  || last.high,
+                    low:    stockInfo.low   || last.low,
+                    volume: stockInfo.volume > 0 ? stockInfo.volume : last.volume,
+                };
             }
         }
-    }
 
-    const finalValue = position ? balance + (position.shares * data[data.length-1].close * (1 - feeRate)) : balance;
-    const totalReturn = ((finalValue - initialBalance) / initialBalance) * 100;
-    return { totalReturn: totalReturn.toFixed(1), trades };
+        const conds = checkScreenerConditions(data);
+        if (conds.hitCount < 4) return null;
+
+        const last = data[data.length - 1];
+        const prev = data[data.length - 2];
+        const changePct = prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
+
+        return { code, name, last, changePct, ...conds };
+    } catch { return null; }
 }
 
-function analyzeTripleConfirmation(data) {
+function checkScreenerConditions(data) {
+    const last = data[data.length - 1];
+
+    // 1. 長紅K棒：收 > 開，且實體 ≥ 3%
+    const bodyPct = (last.close - last.open) / last.open;
+    const c1 = last.close > last.open && bodyPct >= 0.03;
+
+    // 2. 成交量翻倍：今日量 > 近20日均量 × 2
+    const recentVols = data.slice(-21, -1).map(d => d.volume);
+    const avgVol20 = recentVols.reduce((a, b) => a + b, 0) / recentVols.length;
+    const volRatio = avgVol20 > 0 ? last.volume / avgVol20 : 0;
+    const c2 = volRatio >= 2;
+
+    // 3. 突破近10日最高點（不含本日）
+    const recent10High = Math.max(...data.slice(-11, -1).map(d => d.high));
+    const breakoutPct = recent10High > 0 ? ((last.close - recent10High) / recent10High) * 100 : 0;
+    const c3 = last.close > recent10High;
+
+    // 4. 均線轉為上揚：MA5 今 > 昨，MA20 今 > 昨
     const closes = data.map(d => d.close);
-    const volumes = data.map(d => d.volume);
-    
-    const ma5 = calcMA(5, closes);
-    const ma10 = calcMA(10, closes);
+    const ma5  = calcMA(5,  closes);
     const ma20 = calcMA(20, closes);
-    const ma60 = calcMA(60, closes);
-    const macd = calcMACD(closes);
-    
-    const backtest = runTripleBacktest(data, ma5, ma10, ma20, ma60, macd);
-    const signals = [];
+    const n = closes.length - 1;
+    const c4 = parseFloat(ma5[n]) > parseFloat(ma5[n - 1]) &&
+               parseFloat(ma20[n]) > parseFloat(ma20[n - 1]);
 
-    for (let i = data.length - 30; i < data.length; i++) {
-        if (i < 60) continue;
-        const d = data[i];
-        const avgVol5 = volumes.slice(i-5, i).reduce((a,b)=>a+b, 0) / 5;
-        const last10High = Math.max(...data.slice(i-10, i).map(x=>x.high));
-        
-        if (d.close > d.open && (d.close-d.open)/d.open > 0.03 && d.volume > avgVol5 * 1.8 && d.close > last10High && macd.dif[i] > 0) {
-            signals.push({ date: d.date, type: 'Triple Entry', price: d.high, sl: d.low });
-        }
-        if (i > 0 && closes[i-1] > ma20[i-1] && d.close < ma20[i]) {
-            signals.push({ date: d.date, type: 'Exit All', price: d.low, desc: '破 20MA' });
-        }
-    }
-
-    const cp = closes[closes.length-1];
-    let bias = '整理中';
-    let desc = '待爆量突破';
-    const lastSig = signals.filter(s => s.type === 'Triple Entry').pop();
-    if (lastSig) {
-        bias = '波段進場';
-        desc = `回測預期報酬: ${backtest.totalReturn}% | 停損: ${lastSig.sl}`;
-    }
-
-    return { 
-        bias, desc, signals, currentPrice: cp, 
-        currentRsi: calcRSI(14, closes).pop(),
-        ma5, ma10, ma20, ma60, macd, backtest
-    };
+    const hitCount = [c1, c2, c3, c4].filter(Boolean).length;
+    return { c1, c2, c3, c4, hitCount, volRatio, breakoutPct, bodyPct };
 }
 
-function analyzeSMC(data) { return null; }
+function renderScreenerResults(results, totalScanned, deepChecked) {
+    document.getElementById('screenerResults').classList.remove('hidden');
 
-function renderSignalPanel(strategy) {
-    const card = document.getElementById('signalCard');
-    const valEl = document.getElementById('signalValue');
-    const descEl = document.getElementById('signalDesc');
-    const bt = strategy.backtest;
-    
-    valEl.textContent = strategy.bias;
-    descEl.textContent = strategy.desc;
-    
-    card.className = 'signal-card';
-    if (strategy.bias.includes('進場')) card.classList.add('bullish');
-    
-    // 總報酬率與交易次數
-    setText('btWinRate', `${bt.totalReturn}%`);
-    setText('btReturn', `交易 ${bt.trades} 次`);
-    
-    // 狀態
-    const osc = strategy.macd.osc[strategy.macd.osc.length-1] || 0;
-    setText('btTrades', osc > 0 ? 'OSC 多方佔優' : 'OSC 整理中');
-    
-    const rsiText = strategy.currentRsi ? `${strategy.currentRsi.toFixed(1)}` : '--';
-    setText('rsiValue', rsiText);
+    const summary = document.getElementById('screenerSummary');
+    if (results.length === 0) {
+        summary.innerHTML =
+            `<span class="no-result">全市場掃描 <strong>${totalScanned}</strong> 支，` +
+            `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
+            `未找到同時符合全部 4 個條件的標的。</span>`;
+        document.getElementById('screenerBody').innerHTML =
+            '<tr><td colspan="8" class="screener-empty">😴 暫無符合標的，市場整理期</td></tr>';
+        return;
+    }
+
+    summary.innerHTML =
+        `全市場 <strong>${totalScanned}</strong> 支個股，` +
+        `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
+        `符合全部條件 <strong>${results.length}</strong> 支 ✅`;
+
+    const tbody = document.getElementById('screenerBody');
+    tbody.innerHTML = results.map(r => {
+        const { code, name, last, changePct, c1, c2, c3, c4, volRatio, breakoutPct, bodyPct } = r;
+        const dir = changePct >= 0 ? 'up' : 'down';
+        const pSign = changePct >= 0 ? '+' : '';
+        const conds = [
+            c1 ? `<span class="cond-hit c1">長紅 +${(bodyPct*100).toFixed(1)}%</span>` : '',
+            c2 ? `<span class="cond-hit c2">量 ${volRatio.toFixed(1)}x</span>` : '',
+            c3 ? `<span class="cond-hit c3">突破 +${breakoutPct.toFixed(1)}%</span>` : '',
+            c4 ? `<span class="cond-hit c4">均線↑</span>` : '',
+        ].join('');
+        return `
+        <tr onclick="quickSearch('${code}')">
+            <td class="st-code">${code}</td>
+            <td class="st-name">${name}</td>
+            <td class="st-price">${last.close.toFixed(2)}</td>
+            <td class="st-change-${dir}">${pSign}${changePct.toFixed(2)}%</td>
+            <td class="st-vol"><strong>${volRatio.toFixed(1)}x</strong> 均量</td>
+            <td class="st-break">+${breakoutPct.toFixed(2)}%</td>
+            <td class="st-conds">${conds}</td>
+            <td><button class="st-goto" onclick="event.stopPropagation();quickSearch('${code}')">查詢 →</button></td>
+        </tr>`;
+    }).join('');
 }
+
+function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+// ===== K-line Chart =====
 
 // ===== Render K-line Chart =====
-function renderChart(data, srLevels = { supports: [], resistances: [] }, strategy = null) {
+function renderChart(data, srLevels = { supports: [], resistances: [] }) {
     const chartEl = document.getElementById('klineChart');
     if (!state.chart) {
         state.chart = echarts.init(chartEl, 'dark');
@@ -769,10 +829,10 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
     const vols   = data.map(d => d.volume);
     const closes = data.map(d => d.close);
     
-    const ma5    = strategy?.ma5  ?? calcMA(5, closes);
-    const ma10   = strategy?.ma10 ?? calcMA(10, closes);
-    const ma20   = strategy?.ma20 ?? calcMA(20, closes);
-    const ma60   = strategy?.ma60 ?? calcMA(60, closes);
+    const ma5    = calcMA(5, closes);
+    const ma10   = calcMA(10, closes);
+    const ma20   = calcMA(20, closes);
+    const ma60   = calcMA(60, closes);
 
     state.chart.setOption({
         backgroundColor: '#1e293b',
@@ -806,15 +866,6 @@ function renderChart(data, srLevels = { supports: [], resistances: [] }, strateg
                 name: 'K線', type: 'candlestick',
                 xAxisIndex: 0, yAxisIndex: 0, data: kline,
                 itemStyle: { color: '#ef4444', color0: '#22c55e', borderColor: '#ef4444', borderColor0: '#22c55e' },
-                markPoint: {
-                    symbolSize: 12,
-                    data: (strategy?.signals ?? []).map(s => ({
-                        name: s.type, coord: [s.date, s.price],
-                        value: s.type === 'Triple Entry' ? '買' : '賣',
-                        itemStyle: { color: s.type === 'Triple Entry' ? '#ef4444' : '#22c55e' },
-                        label: { fontSize: 10, position: 'top', color: '#fff' }
-                    }))
-                },
                 markLine: {
                     symbol: 'none', silent: true, animation: false,
                     data: [
