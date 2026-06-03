@@ -1,8 +1,14 @@
-// ===== Yahoo Finance API =====
+﻿// ===== Yahoo Finance API =====
 // 使用 query2（有較好的 CORS 支援）
 const YAHOO_API = 'https://query2.finance.yahoo.com/v8/finance/chart';
 // CORS proxy — 當 file:// 直接開啟遇到 CORS 封鎖時自動使用
 const CORS_PROXY = 'https://corsproxy.io/?url=';
+const CORS_PROXIES = [
+    url => `${CORS_PROXY}${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+const LOCAL_MARKET_API = location.protocol === 'http:' && /^(127\.0\.0\.1|localhost)$/i.test(location.hostname);
 
 // 股票代號 → [中文名稱, 類型]
 const STOCK_DB = {
@@ -293,7 +299,9 @@ async function refreshRealtime() {
 // ===== Yahoo Finance Fetch =====
 async function fetchYahoo(ticker, params) {
     const qs = new URLSearchParams(params).toString();
-    const targetUrl = `${YAHOO_API}/${ticker}?${qs}`;
+    const targetUrl = LOCAL_MARKET_API
+        ? `/api/yahoo?ticker=${encodeURIComponent(ticker)}&${qs}`
+        : `${YAHOO_API}/${ticker}?${qs}`;
 
     // 嘗試直接請求，失敗則透過 CORS proxy
     let json;
@@ -302,6 +310,7 @@ async function fetchYahoo(ticker, params) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         json = await res.json();
     } catch (_directErr) {
+        if (LOCAL_MARKET_API) throw _directErr;
         // 直接請求失敗（可能是 file:// CORS），改用 proxy
         const proxyUrl = `${CORS_PROXY}${encodeURIComponent(targetUrl)}`;
         const res = await fetch(proxyUrl);
@@ -567,14 +576,34 @@ function renderSRPanel(levels, currentPrice) {
 
 // ===== Stock Screener =====
 let screenerRunning = false;
+let activeScreenerMode = 'swing';
 
-async function runScreener() {
+const SCREENER_MODES = {
+    swing: {
+        title: '⚡ 短期波段選股器',
+        subtitle: '掃描上市櫃個股，找出強勢回檔後再轉強的短波段標的',
+        buttonLabel: '短期波段',
+        rerunLabel: '重新掃描波段',
+        headers: ['代號', '名稱', '進場', '止損', '止盈', '風險', '分數/條件', ''],
+        badges: ['📈 20MA 向上且站上', '📊 量能 ≥ 5日均量 1.2x', '🚀 突破 5 日整理高點', '🛡 近 5 日回檔 < 8%'],
+    },
+    breakout: {
+        title: '⚡ 原本突破選股器',
+        subtitle: '保留原本策略：長紅K棒、成交量翻倍、突破近期阻力、均線上揚',
+        buttonLabel: '原本突破',
+        rerunLabel: '重新掃描突破',
+        headers: ['代號', '名稱', '進場', '止損', '止盈', '風險', '條件', ''],
+        badges: ['🕯 長紅K棒 ≥3%', '📊 成交量翻倍', '🚀 突破近期阻力', '📈 均線上揚'],
+    },
+};
+
+async function runScreener(mode = 'swing') {
     if (screenerRunning) return;
+    activeScreenerMode = mode;
+    setScreenerModeUI(mode);
     screenerRunning = true;
 
-    const btn = document.getElementById('screenerBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="screener-btn-icon">⏳</span> 掃描中...';
+    setScreenerButtonsDisabled(true, mode, '<span class="screener-btn-icon">⏳</span> 掃描中...');
 
     document.getElementById('screenerProgress').classList.remove('hidden');
     document.getElementById('screenerResults').classList.add('hidden');
@@ -582,15 +611,20 @@ async function runScreener() {
 
     // ── Phase 1：從 TWSE / TPEx Open API 拉取今日全市場行情 ──
     let allStocks = [];
+    let universeLabel = '全市場';
     const [twseRes, tpexRes] = await Promise.allSettled([
-        fetchMarketSnapshot('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', '.TW'),
-        fetchMarketSnapshot('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', '.TWO'),
+        fetchMarketSnapshot(LOCAL_MARKET_API ? '/api/twse' : 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json', '.TW'),
+        fetchMarketSnapshot(LOCAL_MARKET_API ? '/api/tpex' : 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', '.TWO'),
     ]);
-    if (twseRes.status === 'fulfilled') allStocks.push(...twseRes.value);
-    if (tpexRes.status === 'fulfilled') allStocks.push(...tpexRes.value);
+    const twseStocks = twseRes.status === 'fulfilled' ? twseRes.value : [];
+    const tpexStocks = tpexRes.status === 'fulfilled' ? tpexRes.value : [];
+    allStocks.push(...twseStocks, ...tpexStocks);
+    if (twseStocks.length && !tpexStocks.length) universeLabel = '上市';
+    if (!twseStocks.length && tpexStocks.length) universeLabel = '上櫃';
 
     // 若 API 完全取不到，降級為 STOCK_DB
     if (!allStocks.length) {
+        universeLabel = '自選清單';
         allStocks = Object.entries(STOCK_DB)
             .filter(([, [, t]]) => t !== 'ETF')
             .map(([code, [name, t]]) => ({
@@ -600,49 +634,75 @@ async function runScreener() {
     }
 
     const totalScanned = allStocks.length;
-    updateProgress(10, `✅ 取得 ${totalScanned} 支個股（上市＋上櫃）`);
+    updateProgress(10, `✅ 取得 ${universeLabel} ${totalScanned} 支個股（上市＋上櫃）`);
     await sleep(200);
 
-    // ── Phase 2：本地初篩——長紅K棒 ≥ 3% ──
-    let candidates = allStocks.filter(s =>
-        s.open > 0 && s.close > s.open &&
-        (s.close - s.open) / s.open >= 0.03
-    );
+    let candidates = mode === 'breakout'
+        ? allStocks.filter(s => s.open > 0 && s.close > s.open && (s.close - s.open) / s.open >= 0.03)
+        : allStocks.filter(s => s.code && s.volume >= 1000 && (!s.open || s.close >= s.open * 0.98));
+
     // 若市場 API 資料有缺失（非交易時段），候選清單可能為空 → 用全部
     if (!candidates.length) candidates = allStocks.filter(s => s.code);
 
-    updateProgress(15, `🔍 長紅K棒初篩後剩 ${candidates.length} 支，開始深度分析...`);
+    const label = mode === 'breakout' ? '長紅K棒初篩' : '流動性初篩';
+    const deepLabel = mode === 'breakout' ? '原本突破深度分析' : '短波段深度分析';
+    updateProgress(15, `🔍 ${label}後剩 ${candidates.length} 支，開始${deepLabel}...`);
     await sleep(150);
 
-    // ── Phase 3：Yahoo Finance 深度核查（量比、突破、均線）──
     const results = [];
     const deepTotal = candidates.length;
     const BATCH = 5;
 
     for (let i = 0; i < deepTotal; i += BATCH) {
         const batch = candidates.slice(i, i + BATCH);
-        const batchRes = await Promise.all(
-            batch.map(s => screenerDeepCheck(s))
-        );
+        const batchRes = await Promise.all(batch.map(s => screenerDeepCheck(s, mode)));
         for (const r of batchRes) { if (r) results.push(r); }
 
         const done = Math.min(i + BATCH, deepTotal);
-        const pct  = 15 + Math.round((done / deepTotal) * 85);
-        updateProgress(pct,
-            `🔬 深度分析 ${done} / ${deepTotal}，符合 ${results.length} 支...`);
+        const pct = 15 + Math.round((done / deepTotal) * 85);
+        updateProgress(pct, `🔬 深度分析 ${done} / ${deepTotal}，符合 ${results.length} 支...`);
 
         if (i + BATCH < deepTotal) await sleep(280);
     }
 
-    updateProgress(100,
-        `🎯 掃描完成！全市場 ${totalScanned} 支 → 初篩 ${deepTotal} 支 → 符合 ${results.length} 支`);
+    updateProgress(100, `🎯 掃描完成！${universeLabel} ${totalScanned} 支 → 初篩 ${deepTotal} 支 → 符合 ${results.length} 支`);
 
-    results.sort((a, b) => b.hitCount - a.hitCount || b.changePct - a.changePct);
-    renderScreenerResults(results, totalScanned, deepTotal);
+    results.sort((a, b) => {
+        if (mode === 'breakout') return b.hitCount - a.hitCount || b.changePct - a.changePct;
+        return b.swingScore - a.swingScore || b.changePct - a.changePct;
+    });
+    renderScreenerResults(results, totalScanned, deepTotal, mode, universeLabel);
 
-    btn.disabled = false;
-    btn.innerHTML = '<span class="screener-btn-icon">🔄</span> 重新掃描';
+    setScreenerButtonsDisabled(false);
     screenerRunning = false;
+}
+
+function setScreenerModeUI(mode) {
+    const config = SCREENER_MODES[mode];
+    document.querySelector('.screener-title').textContent = config.title;
+    document.querySelector('.screener-subtitle').textContent = config.subtitle;
+
+    const badges = document.querySelectorAll('.screener-conditions .cond-badge');
+    config.badges.forEach((text, i) => { if (badges[i]) badges[i].textContent = text; });
+
+    const headers = document.querySelectorAll('#screenerTable thead th');
+    config.headers.forEach((text, i) => { if (headers[i]) headers[i].textContent = text; });
+
+    document.getElementById('swingScreenerBtn')?.classList.toggle('active', mode === 'swing');
+    document.getElementById('breakoutScreenerBtn')?.classList.toggle('active', mode === 'breakout');
+}
+
+function setScreenerButtonsDisabled(disabled, activeMode = activeScreenerMode, activeHtml = null) {
+    for (const [mode, config] of Object.entries(SCREENER_MODES)) {
+        const btn = document.getElementById(mode === 'swing' ? 'swingScreenerBtn' : 'breakoutScreenerBtn');
+        if (!btn) continue;
+        btn.disabled = disabled;
+        if (disabled && mode === activeMode && activeHtml) {
+            btn.innerHTML = activeHtml;
+        } else {
+            btn.innerHTML = `<span class="screener-btn-icon">${disabled ? '•' : '▶'}</span> ${disabled ? config.buttonLabel : config.rerunLabel}`;
+        }
+    }
 }
 
 function updateProgress(pct, text) {
@@ -650,18 +710,24 @@ function updateProgress(pct, text) {
     document.getElementById('progressText').textContent = text;
 }
 
+async function fetchJsonWithFallback(url, timeoutMs = 12000) {
+    const urls = [url, ...CORS_PROXIES.map(proxy => proxy(url))];
+    let lastError = null;
+    for (const candidate of urls) {
+        try {
+            const res = await fetch(candidate, { signal: AbortSignal.timeout(timeoutMs) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError || new Error('fetch failed');
+}
 // 取得單一市場快照（TWSE 或 TPEx）
 async function fetchMarketSnapshot(url, suffix) {
-    let raw;
-    try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-        raw = await res.json();
-    } catch {
-        try {
-            const res = await fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
-            raw = await res.json();
-        } catch { return []; }
-    }
+    const raw = await fetchJsonWithFallback(url, 12000).catch(() => null);
+    if (!raw) return [];
 
     const rows = Array.isArray(raw) ? raw : (raw.data || raw.aaData || []);
     const stocks = [];
@@ -674,6 +740,8 @@ async function fetchMarketSnapshot(url, suffix) {
 
 // 解析單列行情，相容 TWSE / TPEx 兩種欄位命名
 function parseMarketRow(row, suffix) {
+    if (Array.isArray(row)) return parseMarketArrayRow(row, suffix);
+
     const code = (
         row.Code || row['代號'] || row.SecuritiesCompanyCode || ''
     ).toString().trim();
@@ -690,13 +758,12 @@ function parseMarketRow(row, suffix) {
     const close  = toNum(row.ClosingPrice  || row.Close || row['收盤'] || row['收盤價']);
     const high   = toNum(row.HighestPrice  || row.High  || row['最高'] || row['最高價']);
     const low    = toNum(row.LowestPrice   || row.Low   || row['最低'] || row['最低價']);
-    const volRaw = (row.TradeVolume || row['成交量'] || row['成交股數(千股)'] || '0')
+    const volRaw = (row.TradeVolume || row.TradingShares || row['成交量'] || row['成交股數(千股)'] || '0')
                     .toString().replace(/,/g, '');
 
     if (isNaN(close) || close <= 0) return null;
 
-    // 上市 TradeVolume 單位：股 → 除以 1000 = 張
-    // 上櫃 若欄位為「成交股數(千股)」則已是千股 = 張
+    // 上市 TradeVolume/上櫃 TradingShares 多為股，轉為張；若欄位為「成交股數(千股)」則已是張
     const isKiloshares = !!(row['成交股數(千股)']);
     const volume = isKiloshares
         ? Math.round(parseFloat(volRaw))
@@ -705,12 +772,28 @@ function parseMarketRow(row, suffix) {
     return { code, name, suffix, open, close, high, low, volume };
 }
 
-// Yahoo Finance 深度核查（條件 2、3、4；若今日市場資料有效也核查條件 1）
-async function screenerDeepCheck(stockInfo) {
+function parseMarketArrayRow(row, suffix) {
+    // TWSE STOCK_DAY_ALL response=json rows:
+    // [code, name, tradeVolume, tradeValue, open, high, low, close, change, transaction]
+    const code = (row[0] || '').toString().trim();
+    if (!code || !/^\d{4}$/.test(code) || code.startsWith('0')) return null;
+
+    const toNum = v => parseFloat((v || '0').toString().replace(/,/g, ''));
+    const name = (row[1] || code).toString().trim();
+    const open = toNum(row[4]);
+    const high = toNum(row[5]);
+    const low = toNum(row[6]);
+    const close = toNum(row[7]);
+    const volume = Math.round(toNum(row[2]) / 1000);
+
+    if (isNaN(close) || close <= 0) return null;
+    return { code, name, suffix, open, close, high, low, volume };
+}
+async function screenerDeepCheck(stockInfo, mode = 'swing') {
     const { code, name, suffix } = stockInfo;
     try {
-        const data = await fetchYahooHistory(code + suffix, 2);
-        if (data.length < 22) return null;
+        const data = await fetchYahooHistory(code + suffix, mode === 'breakout' ? 2 : 3);
+        if (data.length < (mode === 'breakout' ? 22 : 65)) return null;
 
         // 用市場 API 資料覆蓋最後一根（更即時），若價格落差 < 5% 才採用
         if (stockInfo.close > 0 && stockInfo.open > 0) {
@@ -727,18 +810,53 @@ async function screenerDeepCheck(stockInfo) {
             }
         }
 
-        const conds = checkScreenerConditions(data);
-        if (conds.hitCount < 4) return null;
+        const conds = mode === 'breakout'
+            ? checkBreakoutScreenerConditions(data)
+            : checkSwingScreenerConditions(data);
+        if (conds.hitCount < (mode === 'breakout' ? 4 : 4)) return null;
 
         const last = data[data.length - 1];
         const prev = data[data.length - 2];
         const changePct = prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
 
-        return { code, name, last, changePct, ...conds };
+        const plan = buildTradePlan(data, mode, conds);
+        return { code, name, last, changePct, plan, ...conds };
     } catch { return null; }
 }
 
-function checkScreenerConditions(data) {
+function buildTradePlan(data, mode, conds) {
+    const last = data[data.length - 1];
+    const entry = last.close;
+    let stopLoss = conds.stopLoss;
+
+    if (!Number.isFinite(stopLoss) || stopLoss <= 0) {
+        if (mode === 'breakout') {
+            const recent10High = Math.max(...data.slice(-11, -1).map(d => d.high));
+            stopLoss = Math.min(last.low, recent10High);
+        } else {
+            stopLoss = last.low;
+        }
+    }
+
+    if (stopLoss >= entry) stopLoss = last.low;
+    const risk = Math.max(entry - stopLoss, entry * 0.01);
+    const takeProfit1 = entry + risk * 1.5;
+    const takeProfit2 = entry + risk * 2;
+    const riskPct = entry > 0 ? (risk / entry) * 100 : 0;
+    return { entry, stopLoss, takeProfit1, takeProfit2, riskPct };
+}
+
+function renderPlanCell(plan) {
+    if (!plan) return '--';
+    return `${plan.takeProfit1.toFixed(2)} <span class="risk-pct">T2 ${plan.takeProfit2.toFixed(2)}</span>`;
+}
+
+function renderRiskCell(plan) {
+    if (!plan) return '--';
+    return `<span class="risk-pct risk-main">-${plan.riskPct.toFixed(1)}%</span><span class="risk-pct">1.5R / 2R</span>`;
+}
+
+function checkBreakoutScreenerConditions(data) {
     const last = data[data.length - 1];
 
     // 1. 長紅K棒：收 > 開，且實體 ≥ 3%
@@ -758,60 +876,408 @@ function checkScreenerConditions(data) {
 
     // 4. 均線轉為上揚：MA5 今 > 昨，MA20 今 > 昨
     const closes = data.map(d => d.close);
-    const ma5  = calcMA(5,  closes);
+    const ma5 = calcMA(5, closes);
     const ma20 = calcMA(20, closes);
     const n = closes.length - 1;
     const c4 = parseFloat(ma5[n]) > parseFloat(ma5[n - 1]) &&
                parseFloat(ma20[n]) > parseFloat(ma20[n - 1]);
 
     const hitCount = [c1, c2, c3, c4].filter(Boolean).length;
-    return { c1, c2, c3, c4, hitCount, volRatio, breakoutPct, bodyPct };
+    const stopLoss = Math.min(last.low, recent10High);
+    const riskPct = last.close > 0 ? ((last.close - stopLoss) / last.close) * 100 : 0;
+    return { c1, c2, c3, c4, hitCount, volRatio, breakoutPct, bodyPct, stopLoss, riskPct };
 }
 
-function renderScreenerResults(results, totalScanned, deepChecked) {
+function checkSwingScreenerConditions(data) {
+    const last = data[data.length - 1];
+    const closes = data.map(d => d.close);
+    const lows = data.map(d => d.low);
+    const highs = data.map(d => d.high);
+    const vols = data.map(d => d.volume);
+    const ma20 = calcMA(20, closes);
+    const ma60 = calcMA(60, closes);
+    const n = closes.length - 1;
+
+    const ma20Now = parseFloat(ma20[n]);
+    const ma20Prev = parseFloat(ma20[n - 3]);
+    const ma60Now = parseFloat(ma60[n]);
+
+    // 1. 趨勢：站上 20MA，且 20MA 上彎；若 20MA > 60MA 額外加分
+    const c1 = last.close > ma20Now && ma20Now > ma20Prev;
+    const trendBonus = ma20Now > ma60Now;
+
+    // 2. 強勢股：近 20 日曾接近波段新高，避免挑到弱勢反彈
+    const recent20High = Math.max(...highs.slice(-21, -1));
+    const prior60High = Math.max(...highs.slice(-61, -21));
+    const c2 = recent20High >= prior60High * 0.98;
+
+    // 3. 回檔守線：近 5 日低點沒有離 20MA 太遠，回檔幅度小於 8%
+    const recent5Low = Math.min(...lows.slice(-5));
+    const recent5High = Math.max(...highs.slice(-6, -1));
+    const pullbackPct = recent5High > 0 ? ((recent5High - recent5Low) / recent5High) * 100 : 0;
+    const holdMa20 = recent5Low >= ma20Now * 0.97;
+    const c3 = holdMa20 && pullbackPct <= 8;
+
+    // 4. 轉強：收盤突破近 5 日整理高點（不含本日），且收紅
+    const baseHigh5 = Math.max(...highs.slice(-6, -1));
+    const breakoutPct = baseHigh5 > 0 ? ((last.close - baseHigh5) / baseHigh5) * 100 : 0;
+    const c4 = last.close > baseHigh5 && last.close >= last.open;
+
+    // 5. 量能：今日量至少大於 5 日均量 1.2 倍，20 日均量作為參考
+    const avgVol5 = avg(vols.slice(-6, -1));
+    const avgVol20 = avg(vols.slice(-21, -1));
+    const volRatio = avgVol5 > 0 ? last.volume / avgVol5 : 0;
+    const c5 = volRatio >= 1.2 && last.volume >= 1000;
+
+    const hitCount = [c1, c2, c3, c4, c5].filter(Boolean).length;
+    const swingScore = Math.round(
+        (c1 ? 24 : 0) + (trendBonus ? 8 : 0) + (c2 ? 18 : 0) +
+        (c3 ? 20 : 0) + (c4 ? 18 : 0) + (c5 ? 12 : 0)
+    );
+    const stopLoss = Math.min(last.low, ma20Now, recent5Low);
+    const riskPct = last.close > 0 ? ((last.close - stopLoss) / last.close) * 100 : 0;
+
+    return {
+        c1, c2, c3, c4, c5, hitCount, trendBonus,
+        volRatio, breakoutPct, pullbackPct, avgVol20,
+        swingScore, stopLoss, riskPct,
+    };
+}
+
+function avg(values) {
+    const valid = values.filter(v => Number.isFinite(v) && v > 0);
+    return valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+}
+
+function getUniverseNote(universeLabel, fullMarketText = '') {
+    if (universeLabel === '全市場') return fullMarketText;
+    if (universeLabel === '自選清單') return '官方行情源未連上，目前不是完整全市場。';
+    return `僅取得${universeLabel}資料，目前不是完整全市場。`;
+}
+function renderScreenerResults(results, totalScanned, deepChecked, mode = activeScreenerMode, universeLabel = '全市場') {
     document.getElementById('screenerResults').classList.remove('hidden');
 
+    if (mode === 'breakout') {
+        renderBreakoutScreenerResults(results, totalScanned, deepChecked, universeLabel);
+        return;
+    }
+    renderSwingScreenerResults(results, totalScanned, deepChecked, universeLabel);
+}
+
+function renderSwingScreenerResults(results, totalScanned, deepChecked, universeLabel = '全市場') {
     const summary = document.getElementById('screenerSummary');
     if (results.length === 0) {
         summary.innerHTML =
-            `<span class="no-result">全市場掃描 <strong>${totalScanned}</strong> 支，` +
+            `<span class="no-result">${universeLabel}掃描 <strong>${totalScanned}</strong> 支，` +
             `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
-            `未找到同時符合全部 4 個條件的標的。</span>`;
+            `未找到同時符合短波段 5 個條件的標的。</span>`;
         document.getElementById('screenerBody').innerHTML =
-            '<tr><td colspan="8" class="screener-empty">😴 暫無符合標的，市場整理期</td></tr>';
+            '<tr><td colspan="8" class="screener-empty">暫無符合標的，等回檔守線後再轉強</td></tr>';
         return;
     }
 
     summary.innerHTML =
-        `全市場 <strong>${totalScanned}</strong> 支個股，` +
+        `${universeLabel} <strong>${totalScanned}</strong> 支個股，` +
         `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
-        `符合全部條件 <strong>${results.length}</strong> 支 ✅`;
+        `短波段候選 <strong>${results.length}</strong> 支。` +
+        `<span class="risk-note">${getUniverseNote(universeLabel, '停損為技術參考，請自行控管單筆風險。')}</span>`;
 
     const tbody = document.getElementById('screenerBody');
     tbody.innerHTML = results.map(r => {
-        const { code, name, last, changePct, c1, c2, c3, c4, volRatio, breakoutPct, bodyPct } = r;
+        const { code, name, last, changePct, c1, c2, c3, c4, c5, volRatio, breakoutPct, pullbackPct, swingScore, plan } = r;
         const dir = changePct >= 0 ? 'up' : 'down';
         const pSign = changePct >= 0 ? '+' : '';
         const conds = [
-            c1 ? `<span class="cond-hit c1">長紅 +${(bodyPct*100).toFixed(1)}%</span>` : '',
-            c2 ? `<span class="cond-hit c2">量 ${volRatio.toFixed(1)}x</span>` : '',
-            c3 ? `<span class="cond-hit c3">突破 +${breakoutPct.toFixed(1)}%</span>` : '',
-            c4 ? `<span class="cond-hit c4">均線↑</span>` : '',
+            c1 ? '<span class="cond-hit c1">趨勢</span>' : '',
+            c2 ? '<span class="cond-hit c2">強勢</span>' : '',
+            c3 ? `<span class="cond-hit c3">回檔 ${pullbackPct.toFixed(1)}%</span>` : '',
+            c4 ? `<span class="cond-hit c4">突破 +${breakoutPct.toFixed(1)}%</span>` : '',
+            c5 ? `<span class="cond-hit c5">量 ${volRatio.toFixed(1)}x</span>` : '',
         ].join('');
         return `
         <tr onclick="quickSearch('${code}')">
             <td class="st-code">${code}</td>
             <td class="st-name">${name}</td>
-            <td class="st-price">${last.close.toFixed(2)}</td>
-            <td class="st-change-${dir}">${pSign}${changePct.toFixed(2)}%</td>
-            <td class="st-vol"><strong>${volRatio.toFixed(1)}x</strong> 均量</td>
-            <td class="st-break">+${breakoutPct.toFixed(2)}%</td>
-            <td class="st-conds">${conds}</td>
-            <td><button class="st-goto" onclick="event.stopPropagation();quickSearch('${code}')">查詢 →</button></td>
+            <td class="st-price">${plan.entry.toFixed(2)}</td>
+            <td class="st-stop">${plan.stopLoss.toFixed(2)}</td>
+            <td class="st-target">${renderPlanCell(plan)}</td>
+            <td class="st-break">${renderRiskCell(plan)}</td>
+            <td class="st-conds"><span class="score-pill">${swingScore}</span>${conds}</td>
+            <td><button class="st-goto" onclick="event.stopPropagation();quickSearch('${code}')">查詢</button></td>
         </tr>`;
     }).join('');
 }
 
+function renderBreakoutScreenerResults(results, totalScanned, deepChecked, universeLabel = '全市場') {
+    const summary = document.getElementById('screenerSummary');
+    if (results.length === 0) {
+        summary.innerHTML =
+            `<span class="no-result">${universeLabel}掃描 <strong>${totalScanned}</strong> 支，` +
+            `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
+            `未找到同時符合全部 4 個原本突破條件的標的。</span>`;
+        document.getElementById('screenerBody').innerHTML =
+            '<tr><td colspan="8" class="screener-empty">暫無符合標的，市場整理期</td></tr>';
+        return;
+    }
+
+    summary.innerHTML =
+        `${universeLabel} <strong>${totalScanned}</strong> 支個股，` +
+        `初篩後深度分析 <strong>${deepChecked}</strong> 支，` +
+        `符合原本突破條件 <strong>${results.length}</strong> 支。` +
+        `<span class="risk-note">${getUniverseNote(universeLabel)}</span>`;
+
+    const tbody = document.getElementById('screenerBody');
+    tbody.innerHTML = results.map(r => {
+        const { code, name, last, changePct, c1, c2, c3, c4, volRatio, breakoutPct, bodyPct, plan } = r;
+        const dir = changePct >= 0 ? 'up' : 'down';
+        const pSign = changePct >= 0 ? '+' : '';
+        const conds = [
+            c1 ? `<span class="cond-hit c1">長紅 +${(bodyPct * 100).toFixed(1)}%</span>` : '',
+            c2 ? `<span class="cond-hit c2">量 ${volRatio.toFixed(1)}x</span>` : '',
+            c3 ? `<span class="cond-hit c3">突破 +${breakoutPct.toFixed(1)}%</span>` : '',
+            c4 ? '<span class="cond-hit c4">均線↑</span>' : '',
+        ].join('');
+        return `
+        <tr onclick="quickSearch('${code}')">
+            <td class="st-code">${code}</td>
+            <td class="st-name">${name}</td>
+            <td class="st-price">${plan.entry.toFixed(2)}</td>
+            <td class="st-stop">${plan.stopLoss.toFixed(2)}</td>
+            <td class="st-target">${renderPlanCell(plan)}</td>
+            <td class="st-break">${renderRiskCell(plan)}</td>
+            <td class="st-conds">${conds}</td>
+            <td><button class="st-goto" onclick="event.stopPropagation();quickSearch('${code}')">查詢</button></td>
+        </tr>`;
+    }).join('');
+}
+// ===== Strategy Backtest =====
+let backtestRunning = false;
+
+async function loadMarketUniverse() {
+    let allStocks = [];
+    let universeLabel = '全市場';
+    const [twseRes, tpexRes] = await Promise.allSettled([
+        fetchMarketSnapshot(LOCAL_MARKET_API ? '/api/twse' : 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json', '.TW'),
+        fetchMarketSnapshot(LOCAL_MARKET_API ? '/api/tpex' : 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', '.TWO'),
+    ]);
+    const twseStocks = twseRes.status === 'fulfilled' ? twseRes.value : [];
+    const tpexStocks = tpexRes.status === 'fulfilled' ? tpexRes.value : [];
+    allStocks.push(...twseStocks, ...tpexStocks);
+    if (twseStocks.length && !tpexStocks.length) universeLabel = '上市';
+    if (!twseStocks.length && tpexStocks.length) universeLabel = '上櫃';
+
+    if (!allStocks.length) {
+        universeLabel = '自選清單';
+        allStocks = Object.entries(STOCK_DB)
+            .filter(([, [, t]]) => t !== 'ETF')
+            .map(([code, [name, t]]) => ({
+                code, name, suffix: t === '上市' ? '.TW' : '.TWO',
+                open: null, close: null, high: null, low: null, volume: 0,
+            }));
+    }
+    return { stocks: allStocks, universeLabel };
+}
+
+async function runBacktest() {
+    if (backtestRunning) return;
+    backtestRunning = true;
+
+    const mode = document.getElementById('backtestMode').value;
+    const months = parseInt(document.getElementById('backtestMonths').value, 10);
+    const holdDays = parseInt(document.getElementById('backtestHoldDays').value, 10);
+    const limitValue = document.getElementById('backtestLimit').value;
+    const btn = document.getElementById('backtestBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="screener-btn-icon">⏳</span> 回測中...';
+    document.getElementById('backtestProgress').classList.remove('hidden');
+    document.getElementById('backtestResults').classList.add('hidden');
+    updateBacktestProgress(0, '📡 取得上市櫃清單...');
+
+    try {
+        const { stocks, universeLabel } = await loadMarketUniverse();
+        const sorted = [...stocks].sort((a, b) => (b.volume || 0) - (a.volume || 0));
+        const limit = limitValue === 'all' ? sorted.length : parseInt(limitValue, 10);
+        const universe = sorted.slice(0, limit);
+        const trades = [];
+        const failed = [];
+        const batchSize = 8;
+
+        updateBacktestProgress(8, `✅ ${universeLabel} ${stocks.length} 支，回測 ${universe.length} 支...`);
+
+        for (let i = 0; i < universe.length; i += batchSize) {
+            const batch = universe.slice(i, i + batchSize);
+            const batchTrades = await Promise.all(batch.map(stock => backtestStock(stock, mode, months, holdDays).catch(err => {
+                failed.push(stock.code);
+                return [];
+            })));
+            batchTrades.flat().forEach(t => trades.push(t));
+
+            const done = Math.min(i + batchSize, universe.length);
+            const pct = 8 + Math.round((done / universe.length) * 92);
+            updateBacktestProgress(pct, `🔬 回測 ${done} / ${universe.length}，找到 ${trades.length} 筆訊號...`);
+            if (i + batchSize < universe.length) await sleep(80);
+        }
+
+        trades.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+        renderBacktestResults(trades, { mode, months, holdDays, universeLabel, stockCount: universe.length, failedCount: failed.length });
+        updateBacktestProgress(100, `🎯 回測完成：${trades.length} 筆訊號`);
+    } catch (err) {
+        document.getElementById('backtestResults').classList.remove('hidden');
+        document.getElementById('backtestMetrics').innerHTML = '';
+        document.getElementById('backtestSummary').innerHTML = `<span class="no-result">回測失敗：${escapeHtml(err.message || String(err))}</span>`;
+        document.getElementById('backtestBody').innerHTML = '';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="screener-btn-icon">▶</span> 重新回測';
+        backtestRunning = false;
+    }
+}
+
+async function backtestStock(stock, mode, months, holdDays) {
+    const data = await fetchYahooHistory(stock.code + stock.suffix, months);
+    const minBars = mode === 'swing' ? 65 : 22;
+    if (data.length < minBars + holdDays) return [];
+
+    const trades = [];
+    for (let i = minBars; i < data.length - holdDays; i++) {
+        const windowData = data.slice(0, i + 1);
+        const conds = mode === 'breakout'
+            ? checkBreakoutScreenerConditions(windowData)
+            : checkSwingScreenerConditions(windowData);
+        if (conds.hitCount < 4) continue;
+
+        const entry = data[i];
+        const exit = data[i + holdDays];
+        if (!entry.close || !exit.close) continue;
+        const returnPct = ((exit.close - entry.close) / entry.close) * 100;
+        trades.push({
+            code: stock.code,
+            name: stock.name,
+            suffix: stock.suffix,
+            entryDate: entry.date,
+            exitDate: exit.date,
+            entryPrice: entry.close,
+            exitPrice: exit.close,
+            returnPct,
+            labels: formatBacktestLabels(conds, mode),
+        });
+    }
+    return trades;
+}
+
+function formatBacktestLabels(conds, mode) {
+    if (mode === 'breakout') {
+        return [
+            conds.c1 ? `長紅 +${(conds.bodyPct * 100).toFixed(1)}%` : '',
+            conds.c2 ? `量 ${conds.volRatio.toFixed(1)}x` : '',
+            conds.c3 ? `突破 +${conds.breakoutPct.toFixed(1)}%` : '',
+            conds.c4 ? '均線↑' : '',
+        ].filter(Boolean);
+    }
+    return [
+        conds.c1 ? '趨勢' : '',
+        conds.c2 ? '強勢' : '',
+        conds.c3 ? `回檔 ${conds.pullbackPct.toFixed(1)}%` : '',
+        conds.c4 ? `突破 +${conds.breakoutPct.toFixed(1)}%` : '',
+        conds.c5 ? `量 ${conds.volRatio.toFixed(1)}x` : '',
+    ].filter(Boolean);
+}
+
+function updateBacktestProgress(pct, text) {
+    document.getElementById('backtestProgressFill').style.width = pct + '%';
+    document.getElementById('backtestProgressText').textContent = text;
+}
+
+function renderBacktestResults(trades, meta) {
+    document.getElementById('backtestResults').classList.remove('hidden');
+    const metrics = calculateBacktestMetrics(trades);
+    const modeLabel = meta.mode === 'breakout' ? '原本突破' : '短期波段';
+
+    document.getElementById('backtestMetrics').innerHTML = [
+        metricCard('訊號數', trades.length.toString()),
+        metricCard('勝率', metrics.winRate === null ? '--' : `${metrics.winRate.toFixed(1)}%`),
+        metricCard('平均報酬', metrics.avgReturn === null ? '--' : `${formatSigned(metrics.avgReturn)}%`, metrics.avgReturn),
+        metricCard('賺賠比', metrics.profitFactor === null ? '--' : metrics.profitFactor.toFixed(2)),
+        metricCard('最大回撤', metrics.maxDrawdown === null ? '--' : formatDrawdown(metrics.maxDrawdown), -metrics.maxDrawdown),
+    ].join('');
+
+    document.getElementById('backtestSummary').innerHTML =
+        `${meta.universeLabel} <strong>${meta.stockCount}</strong> 支，策略 <strong>${modeLabel}</strong>，` +
+        `區間 <strong>${meta.months}</strong> 個月，固定持有 <strong>${meta.holdDays}</strong> 日。` +
+        `<span class="risk-note">${getUniverseNote(meta.universeLabel, '回測為歷史模擬，未含滑價與交易稅費；投組回撤以同日訊號等權平均估算。')}</span>`;
+
+    const shown = [...trades].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).slice(0, 40);
+    document.getElementById('backtestBody').innerHTML = shown.length ? shown.map(t => {
+        const dir = t.returnPct >= 0 ? 'up' : 'down';
+        return `<tr onclick="quickSearch('${t.code}')">
+            <td>${t.entryDate}</td>
+            <td class="st-code">${t.code}</td>
+            <td class="st-name">${t.name}</td>
+            <td class="st-price">${t.entryPrice.toFixed(2)}</td>
+            <td class="st-price">${t.exitPrice.toFixed(2)}</td>
+            <td class="st-change-${dir}">${formatSigned(t.returnPct)}%</td>
+            <td class="st-conds">${t.labels.map(label => `<span class="cond-hit c4">${label}</span>`).join('')}</td>
+            <td><button class="st-goto" onclick="event.stopPropagation();quickSearch('${t.code}')">查詢</button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="8" class="screener-empty">沒有找到符合條件的歷史訊號</td></tr>';
+}
+
+function calculateBacktestMetrics(trades) {
+    if (!trades.length) return { winRate: null, avgReturn: null, profitFactor: null, maxDrawdown: null };
+    const returns = trades.map(t => t.returnPct).filter(Number.isFinite);
+    const wins = returns.filter(r => r > 0);
+    const losses = returns.filter(r => r < 0);
+    const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const winRate = (wins.length / returns.length) * 100;
+    const grossWin = wins.reduce((a, b) => a + b, 0);
+    const grossLoss = Math.abs(losses.reduce((a, b) => a + b, 0));
+    const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
+
+    // 將同一天所有訊號視為等權投組，避免把大量重疊訊號誤當成連續全倉複利交易。
+    const dailyReturns = Object.values(groupBy(trades, t => t.entryDate))
+        .map(dayTrades => avg(dayTrades.map(t => t.returnPct)))
+        .filter(Number.isFinite);
+    const maxDrawdown = calculateMaxDrawdown(dailyReturns);
+    return { winRate, avgReturn, profitFactor, maxDrawdown };
+}
+
+function calculateMaxDrawdown(periodReturns) {
+    if (!periodReturns.length) return null;
+    let equity = 1;
+    let peak = 1;
+    let maxDrawdown = 0;
+    for (const r of periodReturns) {
+        equity *= Math.max(0, 1 + r / 100);
+        peak = Math.max(peak, equity);
+        if (peak > 0) maxDrawdown = Math.max(maxDrawdown, ((peak - equity) / peak) * 100);
+    }
+    return maxDrawdown;
+}
+
+function groupBy(items, keyFn) {
+    return items.reduce((groups, item) => {
+        const key = keyFn(item);
+        (groups[key] ||= []).push(item);
+        return groups;
+    }, {});
+}
+
+function metricCard(label, value, signedValue = null) {
+    const tone = signedValue === null ? '' : signedValue >= 0 ? ' positive' : ' negative';
+    return `<div class="metric-card"><span>${label}</span><strong class="${tone}">${value}</strong></div>`;
+}
+
+function formatDrawdown(value) {
+    if (!Number.isFinite(value) || Math.abs(value) < 0.05) return '0.0%';
+    return `-${value.toFixed(1)}%`;
+}
+function formatSigned(value) {
+    return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
 // ===== K-line Chart =====
@@ -954,3 +1420,17 @@ function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function toggle(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
 function clearRefreshTimer() { if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; } }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

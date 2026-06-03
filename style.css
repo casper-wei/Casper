@@ -1,4 +1,4 @@
-/* ===== CSS Variables ===== */
+﻿/* ===== CSS Variables ===== */
 :root {
     --bg-primary: #0f172a;
     --bg-secondary: #1e293b;
@@ -619,6 +619,12 @@ h1 {
     font-size: 0.75rem;
     color: var(--text-muted);
 }
+.screener-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
 .screener-btn {
     display: flex;
     align-items: center;
@@ -647,6 +653,17 @@ h1 {
     transform: none;
 }
 .screener-btn-icon { font-size: 0.75rem; }
+.screener-btn-secondary {
+    background: linear-gradient(135deg, #3b82f6, #22d3ee);
+    box-shadow: 0 2px 12px rgba(34,211,238,0.22);
+}
+.screener-btn-secondary:hover {
+    box-shadow: 0 4px 18px rgba(34,211,238,0.36);
+}
+.screener-btn.active {
+    outline: 2px solid rgba(255,255,255,0.18);
+    outline-offset: 2px;
+}
 
 .screener-conditions {
     display: flex;
@@ -806,3 +823,135 @@ h1 {
 
 /* ===== Utilities ===== */
 .hidden { display: none !important; }
+
+/* ===== Swing Screener Enhancements ===== */
+.risk-note {
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+.score-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 22px;
+    margin-right: 6px;
+    border-radius: 999px;
+    background: rgba(252, 211, 77, 0.16);
+    color: #fcd34d;
+    font-weight: 800;
+    font-size: 0.76rem;
+    border: 1px solid rgba(252, 211, 77, 0.35);
+}
+.risk-pct {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    margin-top: 2px;
+}
+.cond-hit.c5 {
+    background: rgba(20, 184, 166, 0.15);
+    color: #5eead4;
+    border-color: rgba(20, 184, 166, 0.35);
+}
+
+
+/* ===== Backtest ===== */
+.backtest-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow);
+}
+.backtest-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.backtest-btn {
+    background: linear-gradient(135deg, #14b8a6, #3b82f6);
+    box-shadow: 0 2px 12px rgba(20,184,166,0.24);
+}
+.backtest-btn:hover { box-shadow: 0 4px 18px rgba(20,184,166,0.36); }
+.backtest-controls {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.backtest-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+.backtest-controls select {
+    min-height: 36px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.86rem;
+    outline: none;
+}
+.backtest-controls select:focus { border-color: var(--accent); }
+.backtest-progress { margin-top: 12px; }
+.backtest-results { margin-top: 16px; }
+.backtest-metrics {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(110px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.metric-card {
+    background: rgba(0,0,0,0.18);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+}
+.metric-card span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.metric-card strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+}
+.metric-card strong.positive { color: var(--up); }
+.metric-card strong.negative { color: var(--down); }
+@media (max-width: 760px) {
+    .backtest-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .backtest-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 460px) {
+    .backtest-controls, .backtest-metrics { grid-template-columns: 1fr; }
+}
+
+/* ===== Trade Plan Cells ===== */
+.st-stop {
+    color: #86efac;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.st-target {
+    color: #fca5a5;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.risk-main {
+    color: #86efac;
+    font-weight: 800;
+}
