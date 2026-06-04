@@ -8,7 +8,13 @@ const CORS_PROXIES = [
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://thingproxy.freeboard.io/fetch/${url}`,
 ];
+const LOOPBACK_API_BASE = 'http://127.0.0.1:8787';
 const LOCAL_MARKET_API = location.protocol === 'http:' && /^(127\.0\.0\.1|localhost)$/i.test(location.hostname);
+const LOCAL_PROXY_FIRST = !LOCAL_MARKET_API;
+
+function localApiUrl(path) {
+    return LOCAL_MARKET_API ? path : LOOPBACK_API_BASE + path;
+}
 
 // 股票代號 → [中文名稱, 類型]
 const STOCK_DB = {
@@ -299,23 +305,26 @@ async function refreshRealtime() {
 // ===== Yahoo Finance Fetch =====
 async function fetchYahoo(ticker, params) {
     const qs = new URLSearchParams(params).toString();
-    const targetUrl = LOCAL_MARKET_API
-        ? `/api/yahoo?ticker=${encodeURIComponent(ticker)}&${qs}`
-        : `${YAHOO_API}/${ticker}?${qs}`;
+    const directUrl = `${YAHOO_API}/${ticker}?${qs}`;
+    const localUrl = `${localApiUrl('/api/yahoo')}?ticker=${encodeURIComponent(ticker)}&${qs}`;
+    const candidates = LOCAL_PROXY_FIRST ? [localUrl, directUrl] : [localUrl];
 
-    // 嘗試直接請求，失敗則透過 CORS proxy
-    let json;
-    try {
-        const res = await fetch(targetUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        json = await res.json();
-    } catch (_directErr) {
-        if (LOCAL_MARKET_API) throw _directErr;
-        // 直接請求失敗（可能是 file:// CORS），改用 proxy
-        const proxyUrl = `${CORS_PROXY}${encodeURIComponent(targetUrl)}`;
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        json = await res.json();
+    let json = null;
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            json = await fetchJsonOnce(candidate, candidate === localUrl && LOCAL_PROXY_FIRST ? 2500 : 12000);
+            break;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    if (!json && !LOCAL_MARKET_API) {
+        const proxyUrl = `${CORS_PROXY}${encodeURIComponent(directUrl)}`;
+        json = await fetchJsonOnce(proxyUrl, 12000).catch(err => {
+            throw lastError || err;
+        });
     }
 
     if (json.chart?.error) throw new Error(json.chart.error.description || 'API error');
@@ -710,14 +719,17 @@ function updateProgress(pct, text) {
     document.getElementById('progressText').textContent = text;
 }
 
+async function fetchJsonOnce(url, timeoutMs = 12000) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+}
 async function fetchJsonWithFallback(url, timeoutMs = 12000) {
     const urls = [url, ...CORS_PROXIES.map(proxy => proxy(url))];
     let lastError = null;
     for (const candidate of urls) {
         try {
-            const res = await fetch(candidate, { signal: AbortSignal.timeout(timeoutMs) });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
+            return await fetchJsonOnce(candidate, timeoutMs);
         } catch (err) {
             lastError = err;
         }
@@ -726,7 +738,14 @@ async function fetchJsonWithFallback(url, timeoutMs = 12000) {
 }
 // 取得單一市場快照（TWSE 或 TPEx）
 async function fetchMarketSnapshot(url, suffix) {
-    const raw = await fetchJsonWithFallback(url, 12000).catch(() => null);
+    const localPath = suffix === '.TWO' ? '/api/tpex' : '/api/twse';
+    const candidates = LOCAL_PROXY_FIRST ? [localApiUrl(localPath), url] : [localApiUrl(localPath)];
+    let raw = null;
+    for (const candidate of candidates) {
+        const timeout = candidate.startsWith(LOOPBACK_API_BASE) ? 2500 : 12000;
+        raw = await fetchJsonWithFallback(candidate, timeout).catch(() => null);
+        if (raw) break;
+    }
     if (!raw) return [];
 
     const rows = Array.isArray(raw) ? raw : (raw.data || raw.aaData || []);
@@ -1420,6 +1439,7 @@ function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function toggle(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
 function clearRefreshTimer() { if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; } }
+
 
 
 
