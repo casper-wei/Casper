@@ -133,9 +133,13 @@ function normalizeTwsePayload(text) {
   return { data };
 }
 
-function marketUrls(localPath, officialUrl, needsCorsFallback = false) {
+function marketUrls(localPath, officialUrl, options = {}) {
+  const { corsFallback = false, staticFallback = null, preferStatic = false } = options;
   if (LOCAL_API) return [localPath, officialUrl];
-  return needsCorsFallback ? [officialUrl, corsProxyUrl(officialUrl)] : [officialUrl];
+  const urls = preferStatic && staticFallback ? [staticFallback, officialUrl] : [officialUrl];
+  if (staticFallback && !preferStatic) urls.push(staticFallback);
+  if (corsFallback) urls.push(corsProxyUrl(officialUrl));
+  return urls;
 }
 
 function yahooUrls(ticker, range, interval) {
@@ -153,8 +157,8 @@ function parseTpexRows(payload) {
 async function refreshDashboard() {
   setLoading();
   const [twse, tpex] = await Promise.allSettled([
-    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL), 15000, normalizeTwsePayload),
-    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, true), 15000),
+    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL, { staticFallback: 'data/market-twse.json' }), 15000, normalizeTwsePayload),
+    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, { staticFallback: 'data/market-tpex.json', preferStatic: true }), 15000),
   ]);
 
   if (twse.status === 'fulfilled') {
@@ -208,8 +212,8 @@ function parseTpex(payload) {
 
 async function loadUniverse() {
   const [twse, tpex] = await Promise.all([
-    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL), 15000, normalizeTwsePayload),
-    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, true), 15000),
+    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL, { staticFallback: 'data/market-twse.json' }), 15000, normalizeTwsePayload),
+    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, { staticFallback: 'data/market-tpex.json', preferStatic: true }), 15000),
   ]);
   return [...parseTwse(twse), ...parseTpex(tpex)]
     .filter(stock => stock.volume >= 800)
