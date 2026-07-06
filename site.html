@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Casper 交易工作台</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <aside class="rail" aria-label="Casper navigation">
+    <a class="mark" href="site.html" aria-label="Casper">C</a>
+    <nav>
+      <a class="active" href="dashboard.html">儀表板</a>
+    </nav>
+  </aside>
+
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Casper Trading Workspace</p>
+        <h1>短期波段選股、風控與紀錄都在同一頁</h1>
+        <p class="top-subtitle">儀表板已整合選股器，不需要再另外開啟工具頁。</p>
+      </div>
+      <div class="top-actions">
+        <a class="primary-action" href="dashboard.html">進入整合儀表板</a>
+      </div>
+    </header>
+
+    <section class="hero-console">
+      <div class="console-copy">
+        <p class="eyebrow">One Page Dashboard</p>
+        <h2>先看資料狀態，再直接往下篩選股票。</h2>
+        <p>Dashboard 內已包含市場資料狀態、短期波段策略流程、風控、紀錄入口與完整選股器。</p>
+      </div>
+      <div class="mini-terminal" aria-label="Casper routes">
+        <div class="terminal-bar"><span></span><span></span><span></span></div>
+        <code>
+          <span>dashboard.integrated = true</span>
+          <span>screener.embedded = true</span>
+          <span>mode = local_first</span>
+        </code>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -40,11 +40,61 @@ async function proxyJson(res, target) {
       return;
     }
     const text = await upstream.text();
-    send(res, 200, text, 'application/json; charset=utf-8');
+    const body = target.includes('STOCK_DAY_ALL') ? normalizeTwseStockDayAll(text) : text;
+    send(res, 200, body, 'application/json; charset=utf-8');
   } catch (err) {
     send(res, 502, JSON.stringify({ error: err.message }), 'application/json; charset=utf-8');
   }
 }
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    const next = line[i + 1];
+    if (ch === '"' && quoted && next === '"') {
+      current += '"';
+      i += 1;
+    } else if (ch === '"') {
+      quoted = !quoted;
+    } else if (ch === ',' && !quoted) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function normalizeTwseStockDayAll(text) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return text;
+
+  const lines = trimmed.split(/\r?\n/).filter(Boolean);
+  if (lines.length <= 1) return JSON.stringify({ data: [] });
+
+  const data = lines.slice(1).map(parseCsvLine)
+    .filter(row => row.length >= 11)
+    .map(row => [
+      row[1], // code
+      row[2], // name
+      row[3], // trade volume
+      row[4], // trade value
+      row[5], // open
+      row[6], // high
+      row[7], // low
+      row[8], // close
+      row[9], // change
+      row[10], // transaction
+    ]);
+
+  return JSON.stringify({ data });
+}
+
 
 async function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);

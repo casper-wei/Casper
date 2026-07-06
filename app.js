@@ -811,7 +811,7 @@ function parseMarketArrayRow(row, suffix) {
 async function screenerDeepCheck(stockInfo, mode = 'swing') {
     const { code, name, suffix } = stockInfo;
     try {
-        const data = await fetchYahooHistory(code + suffix, mode === 'breakout' ? 2 : 3);
+        const data = await fetchYahooHistory(code + suffix, mode === 'breakout' ? 2 : 6);
         if (data.length < (mode === 'breakout' ? 22 : 65)) return null;
 
         // 用市場 API 資料覆蓋最後一根（更即時），若價格落差 < 5% 才採用
@@ -1439,18 +1439,3 @@ function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function toggle(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
 function clearRefreshTimer() { if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; } }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

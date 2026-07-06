@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Casper 交易工作台</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <aside class="rail" aria-label="Casper dashboard navigation">
+    <a class="mark" href="#overview" aria-label="Casper Dashboard">C</a>
+    <nav>
+      <a class="active" href="#overview">總覽</a>
+      <a href="#records">策略</a>
+      <a href="#risk">風控</a>
+    </nav>
+  </aside>
+
+  <main class="shell">
+    <header id="overview" class="topbar">
+      <div>
+        <p class="eyebrow">Casper Trading Console</p>
+        <h1>短期波段交易工作台</h1>
+      </div>
+      <div class="top-actions">
+        <button id="refreshDashboard" class="icon-button" type="button" title="更新市場資料" aria-label="更新市場資料">↻</button>
+        <a class="secondary-action" href="#records">每日紀錄</a>
+      </div>
+    </header>
+
+    <section class="command-bar" aria-label="策略執行控制">
+      <label>
+        <span>策略</span>
+        <select id="strategySelect" aria-label="策略">
+          <option value="swing">短期波段</option>
+          <option value="breakout">強勢突破</option>
+        </select>
+      </label>
+      <button id="runDailyStrategy" type="button">執行今日策略</button>
+      <button id="runQuickBacktest" type="button">快速回測</button>
+      <div class="run-state">
+        <span id="dailyRunStatus">尚未執行</span>
+        <span id="backtestRunStatus">尚未回測</span>
+      </div>
+    </section>
+
+    <section class="status-grid" aria-label="市場資料狀態">
+      <article class="metric">
+        <span class="metric-label">上市資料</span>
+        <strong id="twseCount">讀取中</strong>
+        <small id="twseStatus">連線中</small>
+      </article>
+      <article class="metric">
+        <span class="metric-label">上櫃資料</span>
+        <strong id="tpexCount">讀取中</strong>
+        <small id="tpexStatus">連線中</small>
+      </article>
+      <article class="metric">
+        <span class="metric-label">掃描範圍</span>
+        <strong>160</strong>
+        <small>依成交量排序</small>
+      </article>
+      <article class="metric accent">
+        <span class="metric-label">資金模型</span>
+        <strong>100K</strong>
+        <small>單筆風險 1%</small>
+      </article>
+    </section>
+
+    <section id="records" class="tool-grid">
+      <article class="tool-panel candidates-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Signals</p>
+            <h2>今日候選名單</h2>
+          </div>
+          <span class="badge">進場 / 停損 / 停利</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代號</th>
+                <th>名稱</th>
+                <th>買進</th>
+                <th>停損</th>
+                <th>停利</th>
+                <th>分數</th>
+              </tr>
+            </thead>
+            <tbody id="dailyCandidatesBody">
+              <tr><td colspan="6">按「執行今日策略」產生名單。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="chart-panel" aria-live="polite">
+          <div class="chart-head">
+            <div>
+              <p class="eyebrow">Chart</p>
+              <h3 id="chartTitle">點選候選股查看走勢</h3>
+            </div>
+            <span id="chartMeta">近 6 個月</span>
+          </div>
+          <div id="priceChart" class="price-chart">
+            <span>候選名單產生後，點任一列即可載入股票走勢。</span>
+          </div>
+        </div>
+      </article>
+
+      <aside class="tool-stack">
+        <article id="risk" class="tool-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Risk</p>
+              <h2>風控設定</h2>
+            </div>
+          </div>
+          <dl class="risk-list">
+            <div><dt>帳戶資金</dt><dd>100,000</dd></div>
+            <div><dt>單筆上限</dt><dd>20,000</dd></div>
+            <div><dt>單筆風險</dt><dd>1,000</dd></div>
+            <div><dt>停利節奏</dt><dd>1.5R / 2R</dd></div>
+          </dl>
+        </article>
+
+        <article class="tool-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Backtest</p>
+              <h2>快速回測</h2>
+            </div>
+          </div>
+          <div class="bt-metrics" id="quickBacktestMetrics">
+            <div><small>交易數</small><strong>--</strong></div>
+            <div><small>勝率</small><strong>--</strong></div>
+            <div><small>平均報酬</small><strong>--</strong></div>
+            <div><small>最大回撤</small><strong>--</strong></div>
+          </div>
+        </article>
+      </aside>
+    </section>
+
+    <section class="records-table tool-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Journal</p>
+          <h2>每日策略紀錄</h2>
+        </div>
+        <button id="clearDailyRecords" type="button">清除紀錄</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>策略</th>
+              <th>候選數</th>
+              <th>前三名</th>
+              <th>資料狀態</th>
+            </tr>
+          </thead>
+          <tbody id="dailyRecordsBody">
+            <tr><td colspan="5">尚無紀錄。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
