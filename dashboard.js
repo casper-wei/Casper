@@ -20,6 +20,10 @@ const RECORD_KEY = 'casper.dailyStrategyRecords.v1';
 const DAILY_SCAN_LIMIT = 160;
 const BACKTEST_LIMIT = 80;
 const BACKTEST_HOLD_DAYS = 5;
+const LOCAL_API = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
+const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
+const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
 let latestCandidates = [];
 
 function todayText() {
@@ -70,23 +74,87 @@ function minOf(values) {
   return valid.length ? Math.min(...valid) : 0;
 }
 
+function corsProxyUrl(url) {
+  return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+}
+
+async function fetchTextWithTimeout(url, timeoutMs = 10000) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+
+async function fetchWithTimeout(url, timeoutMs = 10000) {
+  return JSON.parse(await fetchTextWithTimeout(url, timeoutMs));
+}
+
+async function fetchJsonCandidates(urls, timeoutMs = 10000, normalizer = text => JSON.parse(text)) {
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      return normalizer(await fetchTextWithTimeout(url, timeoutMs));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('資料源失敗');
+}
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    const next = line[i + 1];
+    if (ch === '"' && quoted && next === '"') {
+      current += '"';
+      i += 1;
+    } else if (ch === '"') {
+      quoted = !quoted;
+    } else if (ch === ',' && !quoted) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function normalizeTwsePayload(text) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return JSON.parse(trimmed);
+  const lines = trimmed.split(/\r?\n/).filter(Boolean);
+  const data = lines.slice(1).map(parseCsvLine)
+    .filter(row => row.length >= 11)
+    .map(row => [row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10]]);
+  return { data };
+}
+
+function marketUrls(localPath, officialUrl, needsCorsFallback = false) {
+  if (LOCAL_API) return [localPath, officialUrl];
+  return needsCorsFallback ? [officialUrl, corsProxyUrl(officialUrl)] : [officialUrl];
+}
+
+function yahooUrls(ticker, range, interval) {
+  const direct = `${YAHOO_URL}/${ticker}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
+  const local = `/api/yahoo?ticker=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
+  return LOCAL_API ? [local, direct] : [direct, corsProxyUrl(direct)];
+}
+
 function parseTpexRows(payload) {
   if (Array.isArray(payload)) return payload.length;
   if (Array.isArray(payload?.data)) return payload.data.length;
   return 0;
 }
 
-async function fetchWithTimeout(url, timeoutMs = 10000) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
-}
-
 async function refreshDashboard() {
   setLoading();
   const [twse, tpex] = await Promise.allSettled([
-    fetchWithTimeout('/api/twse'),
-    fetchWithTimeout('/api/tpex'),
+    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL), 15000, normalizeTwsePayload),
+    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, true), 15000),
   ]);
 
   if (twse.status === 'fulfilled') {
@@ -140,8 +208,8 @@ function parseTpex(payload) {
 
 async function loadUniverse() {
   const [twse, tpex] = await Promise.all([
-    fetchWithTimeout('/api/twse', 15000),
-    fetchWithTimeout('/api/tpex', 15000),
+    fetchJsonCandidates(marketUrls('/api/twse', TWSE_URL), 15000, normalizeTwsePayload),
+    fetchJsonCandidates(marketUrls('/api/tpex', TPEX_URL, true), 15000),
   ]);
   return [...parseTwse(twse), ...parseTpex(tpex)]
     .filter(stock => stock.volume >= 800)
@@ -164,7 +232,7 @@ function normalizeYahooBars(payload) {
 
 async function fetchHistory(stock, range = '6mo') {
   const ticker = `${stock.code}${stock.suffix}`;
-  const payload = await fetchWithTimeout(`/api/yahoo?ticker=${encodeURIComponent(ticker)}&interval=1d&range=${range}`, 15000);
+  const payload = await fetchJsonCandidates(yahooUrls(ticker, range, '1d'), 15000);
   return normalizeYahooBars(payload);
 }
 
