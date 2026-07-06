@@ -1,269 +1,172 @@
-﻿<!DOCTYPE html>
-<html lang="zh-TW">
+<!DOCTYPE html>
+<html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台股查詢</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Casper 交易工作台</title>
+  <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
-    <div class="app">
-        <header class="header">
-            <div class="header-inner">
-                <h1>台股查詢 <span class="subtitle">Taiwan Stock</span></h1>
-                <div class="market-status" id="marketStatus"></div>
-            </div>
-        </header>
+  <aside class="rail" aria-label="Casper dashboard navigation">
+    <a class="mark" href="#overview" aria-label="Casper Dashboard">C</a>
+    <nav>
+      <a class="active" href="#overview">總覽</a>
+      <a href="#records">策略</a>
+      <a href="#risk">風控</a>
+    </nav>
+  </aside>
 
-        <div class="search-section">
-            <div class="search-bar">
-                <div class="input-wrapper">
-                    <input
-                        type="text"
-                        id="stockInput"
-                        placeholder="輸入代號（2330）或中文名稱（台積電）"
-                        autocomplete="off"
-                    />
-                    <div class="autocomplete-dropdown hidden" id="autocompleteList"></div>
-                </div>
-                <button id="searchBtn" onclick="handleSearch()">查詢</button>
-            </div>
-            <div class="quick-links">
-                <span>熱門：</span>
-                <button class="quick-btn" onclick="quickSearch('2330')">2330 台積電</button>
-                <button class="quick-btn" onclick="quickSearch('0050')">0050 台灣50</button>
-                <button class="quick-btn" onclick="quickSearch('2317')">2317 鴻海</button>
-                <button class="quick-btn" onclick="quickSearch('2454')">2454 聯發科</button>
-            </div>
+  <main class="shell">
+    <header id="overview" class="topbar">
+      <div>
+        <p class="eyebrow">Casper Trading Console</p>
+        <h1>短期波段交易工作台</h1>
+      </div>
+      <div class="top-actions">
+        <button id="refreshDashboard" class="icon-button" type="button" title="更新市場資料" aria-label="更新市場資料">↻</button>
+        <a class="secondary-action" href="#records">每日紀錄</a>
+      </div>
+    </header>
+
+    <section class="command-bar" aria-label="策略執行控制">
+      <label>
+        <span>策略</span>
+        <select id="strategySelect" aria-label="策略">
+          <option value="swing">短期波段</option>
+          <option value="breakout">強勢突破</option>
+        </select>
+      </label>
+      <button id="runDailyStrategy" type="button">執行今日策略</button>
+      <button id="runQuickBacktest" type="button">快速回測</button>
+      <div class="run-state">
+        <span id="dailyRunStatus">尚未執行</span>
+        <span id="backtestRunStatus">尚未回測</span>
+      </div>
+    </section>
+
+    <section class="status-grid" aria-label="市場資料狀態">
+      <article class="metric">
+        <span class="metric-label">上市資料</span>
+        <strong id="twseCount">讀取中</strong>
+        <small id="twseStatus">連線中</small>
+      </article>
+      <article class="metric">
+        <span class="metric-label">上櫃資料</span>
+        <strong id="tpexCount">讀取中</strong>
+        <small id="tpexStatus">連線中</small>
+      </article>
+      <article class="metric">
+        <span class="metric-label">掃描範圍</span>
+        <strong>160</strong>
+        <small>依成交量排序</small>
+      </article>
+      <article class="metric accent">
+        <span class="metric-label">資金模型</span>
+        <strong>100K</strong>
+        <small>單筆風險 1%</small>
+      </article>
+    </section>
+
+    <section id="records" class="tool-grid">
+      <article class="tool-panel candidates-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Signals</p>
+            <h2>今日候選名單</h2>
+          </div>
+          <span class="badge">進場 / 停損 / 停利</span>
         </div>
-
-        <!-- ===== Stock Screener ===== -->
-        <div class="screener-section" id="screenerSection">
-            <div class="screener-header">
-                <div class="screener-title-row">
-                    <span class="screener-title">⚡ 短期波段選股器</span>
-                    <span class="screener-subtitle">掃描上市櫃個股，找出強勢回檔後再轉強的短波段標的</span>
-                </div>
-                <div class="screener-actions">
-                    <button class="screener-btn" id="swingScreenerBtn" onclick="runScreener('swing')">
-                        <span class="screener-btn-icon">▶</span> 短期波段
-                    </button>
-                    <button class="screener-btn screener-btn-secondary" id="breakoutScreenerBtn" onclick="runScreener('breakout')">
-                        <span class="screener-btn-icon">▶</span> 原本突破
-                    </button>
-                </div>
-            </div>
-            <div class="screener-conditions">
-                <span class="cond-badge cond-candle">📈 20MA 向上且站上</span>
-                <span class="cond-badge cond-volume">📊 量能 ≥ 5日均量 1.2x</span>
-                <span class="cond-badge cond-breakout">🚀 突破 5 日整理高點</span>
-                <span class="cond-badge cond-ma">🛡 近 5 日回檔 < 8%</span>
-            </div>
-            <div class="screener-progress hidden" id="screenerProgress">
-                <div class="progress-bar-wrap">
-                    <div class="progress-bar-fill" id="progressFill"></div>
-                </div>
-                <div class="progress-text" id="progressText">準備掃描...</div>
-            </div>
-            <div class="screener-results hidden" id="screenerResults">
-                <div class="screener-summary" id="screenerSummary"></div>
-                <div class="screener-table-wrap">
-                    <table class="screener-table" id="screenerTable">
-                        <thead>
-                            <tr>
-                                <th>代號</th>
-                                <th>名稱</th>
-                                <th>進場</th>
-                                <th>止損</th>
-                                <th>止盈</th>
-                                <th>風險</th>
-                                <th>分數/條件</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody id="screenerBody"></tbody>
-                    </table>
-                </div>
-            </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代號</th>
+                <th>名稱</th>
+                <th>買進</th>
+                <th>停損</th>
+                <th>停利</th>
+                <th>分數</th>
+              </tr>
+            </thead>
+            <tbody id="dailyCandidatesBody">
+              <tr><td colspan="6">按「執行今日策略」產生名單。</td></tr>
+            </tbody>
+          </table>
         </div>
-
-
-        <!-- ===== Strategy Backtest ===== -->
-        <div class="backtest-section" id="backtestSection">
-            <div class="backtest-header">
-                <div class="screener-title-row">
-                    <span class="screener-title">📊 策略回測</span>
-                    <span class="screener-subtitle">用歷史 K 線檢查勝率、平均報酬、賺賠比與回撤</span>
-                </div>
-                <button class="screener-btn backtest-btn" id="backtestBtn" onclick="runBacktest()">
-                    <span class="screener-btn-icon">▶</span> 開始回測
-                </button>
+        <div class="chart-panel" aria-live="polite">
+          <div class="chart-head">
+            <div>
+              <p class="eyebrow">Chart</p>
+              <h3 id="chartTitle">點選候選股查看走勢</h3>
             </div>
-            <div class="backtest-controls">
-                <label>策略
-                    <select id="backtestMode">
-                        <option value="swing">短期波段</option>
-                        <option value="breakout">原本突破</option>
-                    </select>
-                </label>
-                <label>區間
-                    <select id="backtestMonths">
-                        <option value="6">近 6 個月</option>
-                        <option value="12">近 12 個月</option>
-                    </select>
-                </label>
-                <label>持有
-                    <select id="backtestHoldDays">
-                        <option value="5">5 日</option>
-                        <option value="10" selected>10 日</option>
-                        <option value="20">20 日</option>
-                    </select>
-                </label>
-                <label>範圍
-                    <select id="backtestLimit">
-                        <option value="300" selected>量大前 300 檔</option>
-                        <option value="500">量大前 500 檔</option>
-                        <option value="all">全部上市櫃</option>
-                    </select>
-                </label>
-            </div>
-            <div class="backtest-progress hidden" id="backtestProgress">
-                <div class="progress-bar-wrap">
-                    <div class="progress-bar-fill" id="backtestProgressFill"></div>
-                </div>
-                <div class="progress-text" id="backtestProgressText">準備回測...</div>
-            </div>
-            <div class="backtest-results hidden" id="backtestResults">
-                <div class="backtest-metrics" id="backtestMetrics"></div>
-                <div class="screener-summary" id="backtestSummary"></div>
-                <div class="screener-table-wrap">
-                    <table class="screener-table">
-                        <thead>
-                            <tr>
-                                <th>日期</th>
-                                <th>代號</th>
-                                <th>名稱</th>
-                                <th>進場</th>
-                                <th>出場</th>
-                                <th>報酬</th>
-                                <th>條件</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody id="backtestBody"></tbody>
-                    </table>
-                </div>
-            </div>
+            <span id="chartMeta">近 6 個月</span>
+          </div>
+          <div id="priceChart" class="price-chart">
+            <span>候選名單產生後，點任一列即可載入股票走勢。</span>
+          </div>
         </div>
-        <div id="errorMsg" class="error-msg hidden"></div>
+      </article>
 
-        <div id="loading" class="loading hidden">
-            <div class="spinner"></div>
-            <p>查詢中...</p>
+      <aside class="tool-stack">
+        <article id="risk" class="tool-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Risk</p>
+              <h2>風控設定</h2>
+            </div>
+          </div>
+          <dl class="risk-list">
+            <div><dt>帳戶資金</dt><dd>100,000</dd></div>
+            <div><dt>單筆上限</dt><dd>20,000</dd></div>
+            <div><dt>單筆風險</dt><dd>1,000</dd></div>
+            <div><dt>停利節奏</dt><dd>1.5R / 2R</dd></div>
+          </dl>
+        </article>
+
+        <article class="tool-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Backtest</p>
+              <h2>快速回測</h2>
+            </div>
+          </div>
+          <div class="bt-metrics" id="quickBacktestMetrics">
+            <div><small>交易數</small><strong>--</strong></div>
+            <div><small>勝率</small><strong>--</strong></div>
+            <div><small>平均報酬</small><strong>--</strong></div>
+            <div><small>最大回撤</small><strong>--</strong></div>
+          </div>
+        </article>
+      </aside>
+    </section>
+
+    <section class="records-table tool-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Journal</p>
+          <h2>每日策略紀錄</h2>
         </div>
+        <button id="clearDailyRecords" type="button">清除紀錄</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>策略</th>
+              <th>候選數</th>
+              <th>前三名</th>
+              <th>資料狀態</th>
+            </tr>
+          </thead>
+          <tbody id="dailyRecordsBody">
+            <tr><td colspan="5">尚無紀錄。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
 
-        <div id="result" class="hidden">
-            <div class="tabs">
-                <button class="tab active" id="tabRealtime" onclick="switchTab('realtime')">
-                    <span class="tab-dot" id="realtimeDot"></span>即時報價
-                </button>
-                <button class="tab" id="tabAfterHours" onclick="switchTab('afterhours')">盤後資料</button>
-            </div>
-
-            <!-- Quote Card -->
-            <div class="quote-card" id="quoteCard">
-                <div class="quote-header">
-                    <div class="stock-info">
-                        <span class="stock-code" id="stockCode"></span>
-                        <span class="stock-name" id="stockName"></span>
-                        <span class="market-badge" id="marketBadge"></span>
-                    </div>
-                    <div class="update-time" id="updateTime"></div>
-                </div>
-
-                <div class="price-section">
-                    <div class="current-price" id="currentPrice">--</div>
-                    <div class="change-info" id="changeInfo">
-                        <span class="change-val" id="changeVal">--</span>
-                        <span class="change-pct" id="changePct">--</span>
-                    </div>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-label">開盤</div>
-                        <div class="stat-value" id="openPrice">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">最高</div>
-                        <div class="stat-value up" id="highPrice">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">最低</div>
-                        <div class="stat-value down" id="lowPrice">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">昨收</div>
-                        <div class="stat-value" id="prevClose">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">成交量</div>
-                        <div class="stat-value" id="volume">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">漲停</div>
-                        <div class="stat-value up" id="upperLimit">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">跌停</div>
-                        <div class="stat-value down" id="lowerLimit">--</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">成交日期</div>
-                        <div class="stat-value" id="tradeDate">--</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Chart Section -->
-            <div class="chart-section">
-                <div class="chart-header">
-                    <span class="chart-title">K線圖（近6個月）</span>
-                    <div class="chart-controls">
-                        <button class="period-btn active" onclick="changePeriod(3, this)">3個月</button>
-                        <button class="period-btn" onclick="changePeriod(6, this)">6個月</button>
-                    </div>
-                    <div class="chart-loading" id="chartLoading">
-                        <div class="spinner-small"></div>
-                    </div>
-                </div>
-                <div id="klineChart"></div>
-                <div class="chart-legend">
-                    <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>漲</span>
-                    <span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>跌</span>
-                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:4px"></span>MA5</span>
-                    <span class="legend-item"><span style="display:inline-block;width:20px;height:2px;background:#a78bfa;vertical-align:middle;margin-right:4px"></span>MA20</span>
-                    <span class="legend-item"><span style="display:inline-block;width:15px;height:2px;background:#22d3ee;vertical-align:middle;margin-right:2px"></span>MA10</span>
-                    <span class="legend-item"><span style="display:inline-block;width:15px;height:2px;background:#6366f1;border-top:1px dashed #6366f1;vertical-align:middle;margin-right:2px"></span>MA60</span>
-                </div>
-            </div>
-
-            <!-- Support / Resistance Panel -->
-            <div class="sr-section hidden" id="srSection">
-                <div class="sr-header">
-                    <span class="sr-title">支撐壓力分析</span>
-                    <span class="sr-method">基於近期擺動高低點（Swing High/Low）聚類分析</span>
-                </div>
-                <div class="sr-body" id="srBody"></div>
-            </div>
-        </div>
-    </div>
-
-    <script src="app.js"></script>
+  <script src="dashboard.js"></script>
 </body>
 </html>
-
-
-
-
