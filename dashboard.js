@@ -26,6 +26,7 @@ const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_
 const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
 const SWING_FALLBACK_URL = 'data/daily-candidates-swing.json';
 let latestCandidates = [];
+let staticSwingPayload = null;
 
 function todayText() {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -157,13 +158,22 @@ function parseTpexRows(payload) {
 
 async function loadStaticSwingCandidates() {
   if (LOCAL_API || strategySelect.value !== 'swing') return null;
+  if (staticSwingPayload) return staticSwingPayload;
   try {
     const payload = await fetchWithTimeout(SWING_FALLBACK_URL, 10000);
     if (!Array.isArray(payload?.candidates) || !payload.candidates.length) return null;
+    staticSwingPayload = payload;
     return payload;
   } catch {
     return null;
   }
+}
+
+async function loadStaticCandidateHistory(code) {
+  if (LOCAL_API) return null;
+  const payload = staticSwingPayload || await loadStaticSwingCandidates();
+  const bars = payload?.history?.[code];
+  return Array.isArray(bars) && bars.length ? bars : null;
 }
 
 async function refreshDashboard() {
@@ -455,12 +465,17 @@ async function showCandidateChart(candidate) {
     const bars = await fetchHistory({ code: candidate.code, suffix: candidateSuffix(candidate) }, '6mo');
     renderPriceChart(candidate, bars);
   } catch (error) {
+    const fallbackBars = await loadStaticCandidateHistory(candidate.code);
+    if (fallbackBars) {
+      renderPriceChart(candidate, fallbackBars, '快照');
+      return;
+    }
     chartMeta.textContent = '載入失敗';
     priceChart.innerHTML = `<span>走勢載入失敗：${escapeHtml(error.message || String(error))}</span>`;
   }
 }
 
-function renderPriceChart(candidate, bars) {
+function renderPriceChart(candidate, bars, sourceLabel = '') {
   const validBars = bars.filter(bar => Number.isFinite(bar.close));
   if (validBars.length < 2) {
     chartMeta.textContent = '資料不足';
@@ -502,7 +517,7 @@ function renderPriceChart(candidate, bars) {
     `;
   }).join('');
 
-  chartMeta.textContent = `${validBars.length} 根日 K｜${formatSigned(changePct)}%`;
+  chartMeta.textContent = `${validBars.length} 根日 K｜${formatSigned(changePct)}%${sourceLabel ? `｜${sourceLabel}` : ''}`;
   priceChart.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${candidate.code} ${escapeHtml(candidate.name)} 近 6 個月走勢">
       <rect width="${width}" height="${height}" rx="8" fill="#0b1118" />
