@@ -462,6 +462,11 @@ async function showCandidateChart(candidate) {
   chartMeta.textContent = '載入走勢...';
   priceChart.innerHTML = '<span>讀取歷史價格中...</span>';
   try {
+    const staticBars = await loadStaticCandidateHistory(candidate.code);
+    if (staticBars) {
+      renderPriceChart(candidate, staticBars, '快照');
+      return;
+    }
     const bars = await fetchHistory({ code: candidate.code, suffix: candidateSuffix(candidate) }, '6mo');
     renderPriceChart(candidate, bars);
   } catch (error) {
