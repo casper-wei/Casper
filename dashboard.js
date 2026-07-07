@@ -24,6 +24,7 @@ const LOCAL_API = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
 const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
 const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
 const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
+const SWING_FALLBACK_URL = 'data/daily-candidates-swing.json';
 let latestCandidates = [];
 
 function todayText() {
@@ -152,6 +153,17 @@ function parseTpexRows(payload) {
   if (Array.isArray(payload)) return payload.length;
   if (Array.isArray(payload?.data)) return payload.data.length;
   return 0;
+}
+
+async function loadStaticSwingCandidates() {
+  if (LOCAL_API || strategySelect.value !== 'swing') return null;
+  try {
+    const payload = await fetchWithTimeout(SWING_FALLBACK_URL, 10000);
+    if (!Array.isArray(payload?.candidates) || !payload.candidates.length) return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 async function refreshDashboard() {
@@ -379,11 +391,17 @@ async function runDailyStrategy() {
     });
 
     candidates.sort((a, b) => b.score - a.score || b.entry - a.entry);
-    const shown = candidates.slice(0, 12);
+    let shown = candidates.slice(0, 12);
+    const fallback = shown.length ? null : await loadStaticSwingCandidates();
+    if (fallback) {
+      shown = fallback.candidates.slice(0, 12);
+    }
     renderDailyCandidates(shown);
-    saveDailyRecord({ date: todayText(), strategy: mode, candidates: shown, scanned: universe.length });
+    saveDailyRecord({ date: todayText(), strategy: mode, candidates: shown, scanned: fallback?.scanned || universe.length });
     renderDailyRecords();
-    dailyRunStatus.textContent = `完成：${candidates.length} 檔符合`;
+    dailyRunStatus.textContent = fallback
+      ? `完成：${shown.length} 檔符合（GitHub 快照）`
+      : `完成：${candidates.length} 檔符合`;
   } catch (error) {
     dailyRunStatus.textContent = '執行失敗';
     dailyCandidatesBody.innerHTML = `<tr><td colspan="6">策略失敗：${escapeHtml(error.message || String(error))}</td></tr>`;

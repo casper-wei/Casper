@@ -1,0 +1,50 @@
+{
+  "date": "2026-07-07",
+  "strategy": "swing",
+  "scanned": 160,
+  "generatedAt": "2026-07-07T03:12:19.403Z",
+  "candidates": [
+    {
+      "code": "1216",
+      "name": "統一",
+      "market": "上市",
+      "suffix": ".TW",
+      "date": "2026-07-07",
+      "entry": 77.8,
+      "stopLoss": 73.8,
+      "takeProfit1": 83.8,
+      "takeProfit2": 85.8,
+      "riskPct": 5.14,
+      "score": 82,
+      "note": "命中 4/5"
+    },
+    {
+      "code": "5351",
+      "name": "鈺創",
+      "market": "上櫃",
+      "suffix": ".TWO",
+      "date": "2026-07-07",
+      "entry": 95.5,
+      "stopLoss": 77.6,
+      "takeProfit1": 122.35,
+      "takeProfit2": 131.3,
+      "riskPct": 18.74,
+      "score": 80,
+      "note": "命中 4/5"
+    },
+    {
+      "code": "8131",
+      "name": "福懋科",
+      "market": "上市",
+      "suffix": ".TW",
+      "date": "2026-07-07",
+      "entry": 82.2,
+      "stopLoss": 67,
+      "takeProfit1": 105,
+      "takeProfit2": 112.6,
+      "riskPct": 18.49,
+      "score": 80,
+      "note": "命中 4/5"
+    }
+  ]
+}
