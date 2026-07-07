@@ -395,8 +395,12 @@ async function runDailyStrategy() {
 function renderDailyCandidates(candidates) {
   latestCandidates = candidates;
   if (!candidates.length) {
-    dailyCandidatesBody.innerHTML = '<tr><td colspan="6">今天沒有符合條件的候選股。</td></tr>';
-    renderEmptyChart('今天沒有候選股可以檢視。');
+    const label = strategyLabel(strategySelect.value);
+    const hint = strategySelect.value === 'breakout'
+      ? '強勢突破條件較嚴格，今天可能沒有訊號；可切回短期波段。'
+      : '短期波段今天沒有符合條件的候選股。';
+    dailyCandidatesBody.innerHTML = `<tr><td colspan="6">${label}：${hint}</td></tr>`;
+    renderEmptyChart(hint);
     return;
   }
   dailyCandidatesBody.innerHTML = candidates.map(item => `
