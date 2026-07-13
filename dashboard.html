@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Casper 交易工作台</title>
-  <link rel="stylesheet" href="dashboard.css?v=20260713a">
+  <link rel="stylesheet" href="dashboard.css?v=20260713b">
 </head>
 <body>
   <aside class="rail" aria-label="Casper dashboard navigation">
@@ -34,6 +34,7 @@
         <select id="strategySelect" aria-label="策略">
           <option value="swing">短期波段</option>
           <option value="breakout">強勢突破（嚴格）</option>
+          <option value="maStack">均線糾結轉多</option>
         </select>
       </label>
       <button id="runDailyStrategy" type="button">執行今日策略</button>
@@ -167,6 +168,6 @@
     </section>
   </main>
 
-  <script src="dashboard.js?v=20260713a"></script>
+  <script src="dashboard.js?v=20260713b"></script>
 </body>
 </html>

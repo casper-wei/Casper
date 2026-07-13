@@ -25,8 +25,10 @@ const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=
 const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
 const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
 const SWING_FALLBACK_URL = 'data/daily-candidates-swing.json';
+const MA_STACK_FALLBACK_URL = 'data/daily-candidates-ma-stack.json';
 let latestCandidates = [];
 let staticSwingPayload = null;
+let staticMaStackPayload = null;
 
 function todayText() {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -64,6 +66,35 @@ function avg(values) {
 function calcMA(values, days, end = values.length) {
   if (end < days) return null;
   return avg(values.slice(end - days, end));
+}
+
+function calcEMA(values, days) {
+  const k = 2 / (days + 1);
+  const result = [];
+  let ema = null;
+  values.forEach((value, index) => {
+    if (!Number.isFinite(value)) {
+      result.push(null);
+      return;
+    }
+    if (ema === null) {
+      ema = index >= days - 1 ? avg(values.slice(index - days + 1, index + 1)) : value;
+    } else {
+      ema = value * k + ema * (1 - k);
+    }
+    result.push(ema);
+  });
+  return result;
+}
+
+function calcMACD(values) {
+  const ema12 = calcEMA(values, 12);
+  const ema26 = calcEMA(values, 26);
+  const dif = values.map((_, index) => (
+    Number.isFinite(ema12[index]) && Number.isFinite(ema26[index]) ? ema12[index] - ema26[index] : null
+  ));
+  const dea = calcEMA(dif.map(value => Number.isFinite(value) ? value : 0), 9);
+  return { dif, dea };
 }
 
 function maxOf(values) {
@@ -172,9 +203,28 @@ async function loadStaticSwingCandidates() {
   }
 }
 
+async function loadStaticMaStackCandidates() {
+  if (LOCAL_API || strategySelect.value !== 'maStack') return null;
+  if (staticMaStackPayload) return staticMaStackPayload;
+  try {
+    const payload = await fetchWithTimeout(MA_STACK_FALLBACK_URL, 10000);
+    if (!Array.isArray(payload?.candidates) || !payload.candidates.length) return null;
+    staticMaStackPayload = payload;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function loadStaticCandidatesForMode(mode) {
+  if (mode === 'swing') return loadStaticSwingCandidates();
+  if (mode === 'maStack') return loadStaticMaStackCandidates();
+  return null;
+}
+
 async function loadStaticCandidateHistory(code) {
   if (LOCAL_API) return null;
-  const payload = staticSwingPayload || await loadStaticSwingCandidates();
+  const payload = staticSwingPayload || staticMaStackPayload || await loadStaticCandidatesForMode(strategySelect.value);
   const bars = payload?.history?.[code];
   return Array.isArray(bars) && bars.length ? bars : null;
 }
@@ -345,6 +395,61 @@ function evaluateBreakout(stock, bars) {
   return makeCandidate(stock, last, risk, hitCount * 25, `突破 ${round(breakoutPct, 1)}%`);
 }
 
+function evaluateMaStack(stock, bars) {
+  if (bars.length < 80) return null;
+  const last = bars.at(-1);
+  const closes = bars.map(bar => bar.close);
+  const lows = bars.map(bar => bar.low);
+  const vols = bars.map(bar => bar.volume);
+  const ma5 = calcMA(closes, 5);
+  const ma10 = calcMA(closes, 10);
+  const ma20 = calcMA(closes, 20);
+  const ma60 = calcMA(closes, 60);
+  const ma5Prev = calcMA(closes, 5, closes.length - 3);
+  const ma10Prev = calcMA(closes, 10, closes.length - 3);
+  const ma20Prev = calcMA(closes, 20, closes.length - 3);
+  if (![ma5, ma10, ma20, ma60, ma5Prev, ma10Prev, ma20Prev].every(Number.isFinite)) return null;
+
+  const { dif, dea } = calcMACD(closes);
+  const difNow = dif.at(-1);
+  const deaNow = dea.at(-1);
+  const difPrev = dif.at(-4);
+  if (![difNow, deaNow, difPrev].every(Number.isFinite)) return null;
+
+  const compressionWindow = [];
+  for (let end = closes.length - 26; end <= closes.length - 2; end += 1) {
+    const values = [calcMA(closes, 5, end), calcMA(closes, 10, end), calcMA(closes, 20, end), calcMA(closes, 60, end)];
+    if (!values.every(Number.isFinite)) continue;
+    const spread = (Math.max(...values) - Math.min(...values)) / values[3] * 100;
+    compressionWindow.push(spread);
+  }
+  const minCompression = minOf(compressionWindow);
+  const c1 = minCompression > 0 && minCompression <= 6;
+  const c2 = ma5 > ma10 && ma10 > ma20 && ma20 > ma60;
+  const c3 = difNow > 0 && deaNow > 0 && difNow >= difPrev;
+  const c4 = last.close > ma5 && ma5 > ma5Prev && ma10 > ma10Prev && ma20 >= ma20Prev;
+  const c5 = last.volume >= 800 && last.volume >= avg(vols.slice(-21, -1)) * 0.8;
+  if (!(c1 && c2 && c3 && c4 && c5)) return null;
+
+  const recent10Low = minOf(lows.slice(-10));
+  const stopBase = minOf([recent10Low, ma20, ma60]);
+  const risk = Math.max(last.close - stopBase, last.close * 0.01);
+  const score = Math.round(
+    (c1 ? 25 : 0) +
+    (c2 ? 30 : 0) +
+    (c3 ? 25 : 0) +
+    (c4 ? 10 : 0) +
+    (c5 ? 10 : 0)
+  );
+  return makeCandidate(stock, last, risk, score, `糾結 ${round(minCompression, 1)}% / MACD>0`);
+}
+
+function evaluateStrategy(stock, bars, mode) {
+  if (mode === 'breakout') return evaluateBreakout(stock, bars);
+  if (mode === 'maStack') return evaluateMaStack(stock, bars);
+  return evaluateSwing(stock, bars);
+}
+
 function makeCandidate(stock, last, risk, score, note) {
   return {
     code: stock.code,
@@ -385,7 +490,8 @@ async function mapLimit(items, limit, worker, onProgress) {
 }
 
 function strategyLabel(mode) {
-  return mode === 'breakout' ? '原本突破' : '短期波段';
+  if (mode === 'maStack') return '均線糾結轉多';
+  return mode === 'breakout' ? '強勢突破' : '短期波段';
 }
 
 async function runDailyStrategy() {
@@ -398,14 +504,14 @@ async function runDailyStrategy() {
     const universe = (await loadUniverse()).slice(0, DAILY_SCAN_LIMIT);
     const candidates = await mapLimit(universe, 8, async stock => {
       const bars = applyLiveBar(await fetchHistory(stock, '6mo'), stock);
-      return mode === 'breakout' ? evaluateBreakout(stock, bars) : evaluateSwing(stock, bars);
+      return evaluateStrategy(stock, bars, mode);
     }, (done, total) => {
       dailyRunStatus.textContent = `分析 ${done} / ${total}`;
     });
 
     candidates.sort((a, b) => b.score - a.score || b.entry - a.entry);
     let shown = candidates.slice(0, 12);
-    const fallback = shown.length ? null : await loadStaticSwingCandidates();
+    const fallback = shown.length ? null : await loadStaticCandidatesForMode(mode);
     if (fallback) {
       shown = fallback.candidates.slice(0, 12);
     }
@@ -429,7 +535,9 @@ function renderDailyCandidates(candidates) {
     const label = strategyLabel(strategySelect.value);
     const hint = strategySelect.value === 'breakout'
       ? '強勢突破條件較嚴格，今天可能沒有訊號；可切回短期波段。'
-      : '短期波段今天沒有符合條件的候選股。';
+      : strategySelect.value === 'maStack'
+        ? '均線糾結轉多今天沒有符合條件的候選股。'
+        : '短期波段今天沒有符合條件的候選股。';
     dailyCandidatesBody.innerHTML = `<tr><td colspan="6">${label}：${hint}</td></tr>`;
     renderEmptyChart(hint);
     return;
@@ -613,12 +721,12 @@ async function runQuickBacktest() {
 }
 
 function backtestStock(stock, bars, mode) {
-  const minBars = mode === 'breakout' ? 22 : 65;
+  const minBars = mode === 'breakout' ? 22 : (mode === 'maStack' ? 80 : 65);
   if (bars.length < minBars + BACKTEST_HOLD_DAYS) return [];
   const trades = [];
   for (let i = minBars; i < bars.length - BACKTEST_HOLD_DAYS; i += 1) {
     const windowBars = bars.slice(0, i + 1);
-    const signal = mode === 'breakout' ? evaluateBreakout(stock, windowBars) : evaluateSwing(stock, windowBars);
+    const signal = evaluateStrategy(stock, windowBars, mode);
     if (!signal) continue;
     const entry = bars[i];
     const exit = bars[i + BACKTEST_HOLD_DAYS];

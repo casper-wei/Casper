@@ -38,6 +38,35 @@ function calcMA(values, days, end = values.length) {
   return avg(values.slice(end - days, end));
 }
 
+function calcEMA(values, days) {
+  const k = 2 / (days + 1);
+  const result = [];
+  let ema = null;
+  values.forEach((value, index) => {
+    if (!Number.isFinite(value)) {
+      result.push(null);
+      return;
+    }
+    if (ema === null) {
+      ema = index >= days - 1 ? avg(values.slice(index - days + 1, index + 1)) : value;
+    } else {
+      ema = value * k + ema * (1 - k);
+    }
+    result.push(ema);
+  });
+  return result;
+}
+
+function calcMACD(values) {
+  const ema12 = calcEMA(values, 12);
+  const ema26 = calcEMA(values, 26);
+  const dif = values.map((_, index) => (
+    Number.isFinite(ema12[index]) && Number.isFinite(ema26[index]) ? ema12[index] - ema26[index] : null
+  ));
+  const dea = calcEMA(dif.map(value => Number.isFinite(value) ? value : 0), 9);
+  return { dif, dea };
+}
+
 function maxOf(values) {
   const valid = values.filter(Number.isFinite);
   return valid.length ? Math.max(...valid) : 0;
@@ -215,6 +244,61 @@ function evaluateSwing(stock, bars) {
   };
 }
 
+function evaluateMaStack(stock, bars) {
+  if (bars.length < 80) return null;
+  const last = bars.at(-1);
+  const closes = bars.map(bar => bar.close);
+  const lows = bars.map(bar => bar.low);
+  const vols = bars.map(bar => bar.volume);
+  const ma5 = calcMA(closes, 5);
+  const ma10 = calcMA(closes, 10);
+  const ma20 = calcMA(closes, 20);
+  const ma60 = calcMA(closes, 60);
+  const ma5Prev = calcMA(closes, 5, closes.length - 3);
+  const ma10Prev = calcMA(closes, 10, closes.length - 3);
+  const ma20Prev = calcMA(closes, 20, closes.length - 3);
+  if (![ma5, ma10, ma20, ma60, ma5Prev, ma10Prev, ma20Prev].every(Number.isFinite)) return null;
+
+  const { dif, dea } = calcMACD(closes);
+  const difNow = dif.at(-1);
+  const deaNow = dea.at(-1);
+  const difPrev = dif.at(-4);
+  if (![difNow, deaNow, difPrev].every(Number.isFinite)) return null;
+
+  const compressionWindow = [];
+  for (let end = closes.length - 26; end <= closes.length - 2; end += 1) {
+    const values = [calcMA(closes, 5, end), calcMA(closes, 10, end), calcMA(closes, 20, end), calcMA(closes, 60, end)];
+    if (!values.every(Number.isFinite)) continue;
+    compressionWindow.push((Math.max(...values) - Math.min(...values)) / values[3] * 100);
+  }
+  const minCompression = minOf(compressionWindow);
+  const c1 = minCompression > 0 && minCompression <= 6;
+  const c2 = ma5 > ma10 && ma10 > ma20 && ma20 > ma60;
+  const c3 = difNow > 0 && deaNow > 0 && difNow >= difPrev;
+  const c4 = last.close > ma5 && ma5 > ma5Prev && ma10 > ma10Prev && ma20 >= ma20Prev;
+  const c5 = last.volume >= 800 && last.volume >= avg(vols.slice(-21, -1)) * 0.8;
+  if (!(c1 && c2 && c3 && c4 && c5)) return null;
+
+  const recent10Low = minOf(lows.slice(-10));
+  const stopBase = minOf([recent10Low, ma20, ma60]);
+  const risk = Math.max(last.close - stopBase, last.close * 0.01);
+  const score = Math.round((c1 ? 25 : 0) + (c2 ? 30 : 0) + (c3 ? 25 : 0) + (c4 ? 10 : 0) + (c5 ? 10 : 0));
+  return {
+    code: stock.code,
+    name: stock.name,
+    market: stock.market,
+    suffix: stock.suffix,
+    date: last.date,
+    entry: round(last.close, 2),
+    stopLoss: round(last.close - risk, 2),
+    takeProfit1: round(last.close + risk * 1.5, 2),
+    takeProfit2: round(last.close + risk * 2, 2),
+    riskPct: round((risk / last.close) * 100, 2),
+    score,
+    note: `糾結 ${round(minCompression, 1)}% / MACD>0`,
+  };
+}
+
 async function mapLimit(items, limit, worker) {
   const results = [];
   let index = 0;
@@ -255,27 +339,49 @@ async function main() {
     .slice(0, DAILY_SCAN_LIMIT);
 
   console.log(`Scanning ${universe.length} stocks...`);
-  const history = {};
-  const candidates = await mapLimit(universe, CONCURRENCY, async stock => {
+  const swingHistory = {};
+  const maStackHistory = {};
+  const results = await mapLimit(universe, CONCURRENCY, async stock => {
     const bars = applyLiveBar(await fetchHistory(stock, '6mo'), stock);
-    const candidate = evaluateSwing(stock, bars);
-    if (candidate) history[candidate.code] = bars;
-    return candidate;
+    const swing = evaluateSwing(stock, bars);
+    const maStack = evaluateMaStack(stock, bars);
+    if (swing) swingHistory[swing.code] = bars;
+    if (maStack) maStackHistory[maStack.code] = bars;
+    return { swing, maStack };
   });
 
+  await writeStrategySnapshot({
+    dataDir,
+    filename: 'daily-candidates-swing.json',
+    strategy: 'swing',
+    scanned: universe.length,
+    candidates: results.map(item => item.swing).filter(Boolean),
+    history: swingHistory,
+  });
+
+  await writeStrategySnapshot({
+    dataDir,
+    filename: 'daily-candidates-ma-stack.json',
+    strategy: 'maStack',
+    scanned: universe.length,
+    candidates: results.map(item => item.maStack).filter(Boolean),
+    history: maStackHistory,
+  });
+}
+
+async function writeStrategySnapshot({ dataDir, filename, strategy, scanned, candidates, history }) {
   candidates.sort((a, b) => b.score - a.score || b.entry - a.entry);
   const shown = candidates.slice(0, 12);
   const payload = {
     date: todayText(),
-    strategy: 'swing',
-    scanned: universe.length,
+    strategy,
+    scanned,
     generatedAt: new Date().toISOString(),
     candidates: shown,
     history: Object.fromEntries(shown.map(candidate => [candidate.code, history[candidate.code] || []])),
   };
-
-  await fs.writeFile(path.join(dataDir, 'daily-candidates-swing.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  console.log(`Wrote ${shown.length} candidates: ${shown.map(item => `${item.code} ${item.name}`).join(', ') || 'none'}`);
+  await fs.writeFile(path.join(dataDir, filename), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  console.log(`Wrote ${filename}: ${shown.length} candidates: ${shown.map(item => `${item.code} ${item.name}`).join(', ') || 'none'}`);
 }
 
 function sleep(ms) {
