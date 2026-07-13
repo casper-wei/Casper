@@ -15,6 +15,10 @@ const quickBacktestMetrics = document.getElementById('quickBacktestMetrics');
 const chartTitle = document.getElementById('chartTitle');
 const chartMeta = document.getElementById('chartMeta');
 const priceChart = document.getElementById('priceChart');
+const runValueButton = document.getElementById('runValueScreener');
+const valueRunStatus = document.getElementById('valueRunStatus');
+const valueMetrics = document.getElementById('valueMetrics');
+const valueBody = document.getElementById('valueBody');
 
 const RECORD_KEY = 'casper.dailyStrategyRecords.v1';
 const DAILY_SCAN_LIMIT = 160;
@@ -23,12 +27,16 @@ const BACKTEST_HOLD_DAYS = 5;
 const LOCAL_API = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
 const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
 const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
+const VALUE_TWSE_URL = 'https://www.twse.com.tw/exchangeReport/BWIBBU_ALL?response=json';
+const VALUE_TPEX_URL = 'https://www.tpex.org.tw/web/stock/aftertrading/peratio_analysis/pera_result.php?l=zh-tw&o=json';
 const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
 const SWING_FALLBACK_URL = 'data/daily-candidates-swing.json';
 const MA_STACK_FALLBACK_URL = 'data/daily-candidates-ma-stack.json';
+const VALUE_FALLBACK_URL = 'data/value-screener.json';
 let latestCandidates = [];
 let staticSwingPayload = null;
 let staticMaStackPayload = null;
+let staticValuePayload = null;
 
 function todayText() {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -283,6 +291,43 @@ function parseTpex(payload) {
     close: numberValue(row.ClosingPrice || row.Close),
     volume: Math.round(numberValue(row.TradingShares || row.TradeVolume) / 1000),
   })).filter(stock => /^[1-9]\d{3}$/.test(stock.code) && stock.close > 0);
+}
+
+function parseValueTwse(payload) {
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.map(row => ({
+    code: String(row[0] || '').trim(),
+    name: String(row[1] || '').trim(),
+    pe: numberValue(row[2]),
+    yieldPct: numberValue(row[3]),
+    pb: numberValue(row[4]),
+    market: '上市',
+  })).filter(item => /^[1-9]\d{3}$/.test(item.code));
+}
+
+function parseValueTpex(payload) {
+  const rows = Array.isArray(payload?.tables?.[0]?.data) ? payload.tables[0].data : [];
+  return rows.map(row => ({
+    code: String(row[0] || '').trim(),
+    name: String(row[1] || '').trim(),
+    pe: numberValue(row[2]),
+    yieldPct: numberValue(row[5]),
+    pb: numberValue(row[6]),
+    market: '上櫃',
+  })).filter(item => /^[1-9]\d{3}$/.test(item.code));
+}
+
+async function loadValueUniverse() {
+  const [universe, twseValue, tpexValue] = await Promise.all([
+    loadUniverse(),
+    fetchJsonCandidates(marketUrls('/api/value-twse', VALUE_TWSE_URL), 15000),
+    fetchJsonCandidates(marketUrls('/api/value-tpex', VALUE_TPEX_URL, { corsFallback: true }), 15000),
+  ]);
+  const quoteMap = new Map(universe.map(stock => [stock.code, stock]));
+  return [...parseValueTwse(twseValue), ...parseValueTpex(tpexValue)]
+    .map(item => ({ ...item, quote: quoteMap.get(item.code) }))
+    .filter(item => item.quote && item.quote.close > 0 && item.pe > 0 && item.pb > 0)
+    .sort((a, b) => b.quote.volume - a.quote.volume);
 }
 
 async function loadUniverse() {
@@ -710,6 +755,165 @@ function renderDailyRecords() {
   }).join('');
 }
 
+async function runValueScreener() {
+  runValueButton.disabled = true;
+  valueRunStatus.textContent = LOCAL_API ? '取得估值資料...' : '讀取低估值快照...';
+  valueBody.innerHTML = '<tr><td colspan="12">低估值評分中...</td></tr>';
+  renderValueMetrics(null);
+
+  try {
+    if (!LOCAL_API) {
+      const snapshot = await loadStaticValueRows();
+      const rows = snapshot.rows || [];
+      renderValueRows(rows);
+      renderValueMetrics(rows);
+      valueRunStatus.textContent = `完成：${rows.length} 檔符合（GitHub 快照）`;
+      return;
+    }
+    const base = (await loadValueUniverse()).slice(0, 260);
+    const rows = await mapLimit(base, 8, async item => {
+      const bars = applyLiveBar(await fetchHistory(item.quote, '6mo'), item.quote);
+      return evaluateValueStock(item, bars);
+    }, (done, total) => {
+      valueRunStatus.textContent = `分析 ${done} / ${total}`;
+    });
+
+    const qualified = rows
+      .filter(Boolean)
+      .filter(item => item.totalScore >= 65 && item.valueTrapReasons.length <= 1)
+      .sort((a, b) => b.totalScore - a.totalScore || b.yieldPct - a.yieldPct)
+      .slice(0, 30);
+
+    renderValueRows(qualified);
+    renderValueMetrics(qualified);
+    valueRunStatus.textContent = `完成：${qualified.length} 檔符合`;
+  } catch (error) {
+    valueRunStatus.textContent = '執行失敗';
+    valueBody.innerHTML = `<tr><td colspan="12">低估值評分失敗：${escapeHtml(error.message || String(error))}</td></tr>`;
+  } finally {
+    runValueButton.disabled = false;
+  }
+}
+
+async function loadStaticValueRows() {
+  if (staticValuePayload) return staticValuePayload;
+  const payload = await fetchWithTimeout(VALUE_FALLBACK_URL, 10000);
+  staticValuePayload = payload;
+  return payload;
+}
+
+function scoreValueStock(item) {
+  const roeEst = item.pe > 0 ? item.pb / item.pe * 100 : 0;
+  const valuationScore = clampScore((item.pe <= 10 ? 50 : item.pe <= 15 ? 42 : item.pe <= 20 ? 30 : item.pe <= 30 ? 16 : 4) + (item.pb <= 1 ? 50 : item.pb <= 1.5 ? 40 : item.pb <= 2 ? 26 : item.pb <= 3 ? 12 : 2));
+  const profitScore = clampScore((roeEst >= 15 ? 55 : roeEst >= 10 ? 44 : roeEst >= 7 ? 30 : roeEst >= 4 ? 16 : 4) + (item.yieldPct >= 5 ? 45 : item.yieldPct >= 3 ? 34 : item.yieldPct >= 1.5 ? 18 : item.yieldPct > 0 ? 8 : 0));
+  const safetyScore = clampScore((item.pb <= 1.2 ? 36 : item.pb <= 2 ? 28 : item.pb <= 3 ? 16 : 4) + (item.pe <= 18 ? 32 : item.pe <= 30 ? 18 : 4) + (item.quote.volume >= 1000 ? 18 : 10) + (item.yieldPct >= 2 ? 14 : 4));
+  return { roeEst, valuationScore, profitScore, safetyScore };
+}
+
+function evaluateValueStock(item, bars) {
+  if (bars.length < 80) return null;
+  const last = bars.at(-1);
+  const closes = bars.map(bar => bar.close);
+  const ma20 = calcMA(closes, 20);
+  const ma60 = calcMA(closes, 60);
+  const ma20Prev = calcMA(closes, 20, closes.length - 5);
+  const high120 = maxOf(bars.map(bar => bar.high).slice(-120));
+  const low120 = minOf(bars.map(bar => bar.low).slice(-120));
+  const sixMonthReturn = bars[0].close ? (last.close - bars[0].close) / bars[0].close * 100 : 0;
+  const drawdownFromHigh = high120 ? (last.close - high120) / high120 * 100 : 0;
+  const { roeEst, valuationScore, profitScore, safetyScore } = scoreValueStock(item);
+  const growthScore = clampScore((last.close > ma60 ? 34 : 12) + (ma20 > ma20Prev ? 34 : 12) + (sixMonthReturn > 0 ? 22 : 8) + (last.close > ma20 ? 10 : 0));
+  const valueTrapReasons = [];
+  if (roeEst < 6) valueTrapReasons.push('ROE估偏低');
+  if (item.yieldPct < 2) valueTrapReasons.push('殖利率不足');
+  if (last.close < ma60 && ma20 < ma60) valueTrapReasons.push('長線仍偏弱');
+  if (drawdownFromHigh < -35) valueTrapReasons.push('疑似弱勢便宜股');
+
+  const fairLow = Math.max(item.pb ? last.close * (1.05 / item.pb) : 0, item.pe ? last.close * (10 / item.pe) : 0);
+  const fairHigh = Math.max(item.pb ? last.close * (1.45 / item.pb) : 0, item.pe ? last.close * (15 / item.pe) : 0);
+  const technicalEntry = last.close > ma20 && ma20 > ma20Prev ? '站上20MA' : last.close > ma60 ? '等20MA轉強' : '等站回60MA';
+  const backtestReturn = calcValueBacktestReturn(bars);
+  const totalScore = Math.round(valuationScore * 0.34 + profitScore * 0.24 + safetyScore * 0.22 + growthScore * 0.2);
+
+  return {
+    code: item.code,
+    name: item.name,
+    market: item.market,
+    close: last.close,
+    pe: item.pe,
+    pb: item.pb,
+    yieldPct: item.yieldPct,
+    roeEst,
+    valuationScore,
+    profitScore,
+    safetyScore,
+    growthScore,
+    totalScore,
+    valueTrapReasons,
+    fairLow: round(Math.min(fairLow, fairHigh), 2),
+    fairHigh: round(Math.max(fairLow, fairHigh), 2),
+    technicalEntry,
+    backtestReturn,
+  };
+}
+
+function calcValueBacktestReturn(bars) {
+  if (bars.length < 80) return null;
+  const startIndex = Math.max(60, bars.length - 60);
+  const entry = bars[startIndex]?.close;
+  const exit = bars.at(-1)?.close;
+  return entry && exit ? (exit - entry) / entry * 100 : null;
+}
+
+function renderValueRows(rows) {
+  if (!rows.length) {
+    valueBody.innerHTML = '<tr><td colspan="12">目前沒有符合條件的低估值股票。</td></tr>';
+    return;
+  }
+  valueBody.innerHTML = rows.map(item => {
+    const judgment = item.valueTrapReasons.length ? item.valueTrapReasons.join('、') : '穩健低估';
+    return `
+      <tr>
+        <td><span class="stock-cell"><b>${item.code} ${escapeHtml(item.name)}</b><small>${item.market}｜收盤 ${round(item.close, 2)}</small></span></td>
+        <td><span class="score-badge ${item.totalScore >= 80 ? 'is-good' : 'is-watch'}">${item.totalScore}</span></td>
+        <td>${formatMetric(item.pe, 1)}</td>
+        <td>${formatMetric(item.pb, 2)}</td>
+        <td>${formatMetric(item.roeEst, 1)}%</td>
+        <td>${formatMetric(item.yieldPct, 1)}%</td>
+        <td>${item.safetyScore}</td>
+        <td>${item.growthScore}</td>
+        <td>${item.fairLow.toFixed(2)} - ${item.fairHigh.toFixed(2)}</td>
+        <td>${escapeHtml(item.technicalEntry)}</td>
+        <td>${item.backtestReturn === null ? '--' : `${formatSigned(item.backtestReturn)}%`}</td>
+        <td class="reason-cell">${escapeHtml(judgment)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderValueMetrics(rows) {
+  const values = rows ? [
+    ['符合檔數', String(rows.length)],
+    ['平均總分', rows.length ? String(round(avg(rows.map(item => item.totalScore)), 1)) : '--'],
+    ['高殖利率', String(rows.filter(item => item.yieldPct >= 4).length)],
+    ['價值陷阱', String(rows.filter(item => item.valueTrapReasons.length).length)],
+  ] : [
+    ['符合檔數', '--'],
+    ['平均總分', '--'],
+    ['高殖利率', '--'],
+    ['價值陷阱', '--'],
+  ];
+  valueMetrics.innerHTML = values.map(([label, value]) => `<div><small>${label}</small><strong>${value}</strong></div>`).join('');
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, round(value, 1)));
+}
+
+function formatMetric(value, digits = 1) {
+  return Number.isFinite(value) && value > 0 ? round(value, digits).toFixed(digits) : '--';
+}
+
 async function runQuickBacktest() {
   const mode = strategySelect.value;
   runBacktestButton.disabled = true;
@@ -823,6 +1027,7 @@ function escapeHtml(value) {
 refreshButton?.addEventListener('click', refreshDashboard);
 runDailyButton?.addEventListener('click', runDailyStrategy);
 runBacktestButton?.addEventListener('click', runQuickBacktest);
+runValueButton?.addEventListener('click', runValueScreener);
 clearRecordsButton?.addEventListener('click', () => {
   localStorage.removeItem(RECORD_KEY);
   renderDailyRecords();

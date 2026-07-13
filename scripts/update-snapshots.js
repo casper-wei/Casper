@@ -3,6 +3,8 @@ const path = require('node:path');
 
 const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
 const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
+const VALUE_TWSE_URL = 'https://www.twse.com.tw/exchangeReport/BWIBBU_ALL?response=json';
+const VALUE_TPEX_URL = 'https://www.tpex.org.tw/web/stock/aftertrading/peratio_analysis/pera_result.php?l=zh-tw&o=json';
 const YAHOO_URL = 'https://query2.finance.yahoo.com/v8/finance/chart';
 const DAILY_SCAN_LIMIT = Number(process.env.DAILY_SCAN_LIMIT || 160);
 const CONCURRENCY = Number(process.env.SNAPSHOT_CONCURRENCY || 8);
@@ -158,6 +160,30 @@ function parseTpex(payload) {
   })).filter(stock => /^[1-9]\d{3}$/.test(stock.code) && stock.close > 0);
 }
 
+function parseValueTwse(payload) {
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.map(row => ({
+    code: String(row[0] || '').trim(),
+    name: String(row[1] || '').trim(),
+    pe: numberValue(row[2]),
+    yieldPct: numberValue(row[3]),
+    pb: numberValue(row[4]),
+    market: '上市',
+  })).filter(item => /^[1-9]\d{3}$/.test(item.code));
+}
+
+function parseValueTpex(payload) {
+  const rows = Array.isArray(payload?.tables?.[0]?.data) ? payload.tables[0].data : [];
+  return rows.map(row => ({
+    code: String(row[0] || '').trim(),
+    name: String(row[1] || '').trim(),
+    pe: numberValue(row[2]),
+    yieldPct: numberValue(row[5]),
+    pb: numberValue(row[6]),
+    market: '上櫃',
+  })).filter(item => /^[1-9]\d{3}$/.test(item.code));
+}
+
 function normalizeYahooBars(payload) {
   const result = payload?.chart?.result?.[0];
   const timestamps = result?.timestamp || [];
@@ -299,6 +325,72 @@ function evaluateMaStack(stock, bars) {
   };
 }
 
+function scoreValueStock(item) {
+  const roeEst = item.pe > 0 ? item.pb / item.pe * 100 : 0;
+  const valuationScore = clampScore((item.pe <= 10 ? 50 : item.pe <= 15 ? 42 : item.pe <= 20 ? 30 : item.pe <= 30 ? 16 : 4) + (item.pb <= 1 ? 50 : item.pb <= 1.5 ? 40 : item.pb <= 2 ? 26 : item.pb <= 3 ? 12 : 2));
+  const profitScore = clampScore((roeEst >= 15 ? 55 : roeEst >= 10 ? 44 : roeEst >= 7 ? 30 : roeEst >= 4 ? 16 : 4) + (item.yieldPct >= 5 ? 45 : item.yieldPct >= 3 ? 34 : item.yieldPct >= 1.5 ? 18 : item.yieldPct > 0 ? 8 : 0));
+  const safetyScore = clampScore((item.pb <= 1.2 ? 36 : item.pb <= 2 ? 28 : item.pb <= 3 ? 16 : 4) + (item.pe <= 18 ? 32 : item.pe <= 30 ? 18 : 4) + (item.quote.volume >= 1000 ? 18 : 10) + (item.yieldPct >= 2 ? 14 : 4));
+  return { roeEst, valuationScore, profitScore, safetyScore };
+}
+
+function evaluateValueStock(item, bars) {
+  if (bars.length < 80) return null;
+  const last = bars.at(-1);
+  const closes = bars.map(bar => bar.close);
+  const ma20 = calcMA(closes, 20);
+  const ma60 = calcMA(closes, 60);
+  const ma20Prev = calcMA(closes, 20, closes.length - 5);
+  const high120 = maxOf(bars.map(bar => bar.high).slice(-120));
+  const sixMonthReturn = bars[0].close ? (last.close - bars[0].close) / bars[0].close * 100 : 0;
+  const drawdownFromHigh = high120 ? (last.close - high120) / high120 * 100 : 0;
+  const { roeEst, valuationScore, profitScore, safetyScore } = scoreValueStock(item);
+  const growthScore = clampScore((last.close > ma60 ? 34 : 12) + (ma20 > ma20Prev ? 34 : 12) + (sixMonthReturn > 0 ? 22 : 8) + (last.close > ma20 ? 10 : 0));
+  const valueTrapReasons = [];
+  if (roeEst < 6) valueTrapReasons.push('ROE估偏低');
+  if (item.yieldPct < 2) valueTrapReasons.push('殖利率不足');
+  if (last.close < ma60 && ma20 < ma60) valueTrapReasons.push('長線仍偏弱');
+  if (drawdownFromHigh < -35) valueTrapReasons.push('疑似弱勢便宜股');
+
+  const fairLow = Math.max(item.pb ? last.close * (1.05 / item.pb) : 0, item.pe ? last.close * (10 / item.pe) : 0);
+  const fairHigh = Math.max(item.pb ? last.close * (1.45 / item.pb) : 0, item.pe ? last.close * (15 / item.pe) : 0);
+  const technicalEntry = last.close > ma20 && ma20 > ma20Prev ? '站上20MA' : last.close > ma60 ? '等20MA轉強' : '等站回60MA';
+  const backtestReturn = calcValueBacktestReturn(bars);
+  const totalScore = Math.round(valuationScore * 0.34 + profitScore * 0.24 + safetyScore * 0.22 + growthScore * 0.2);
+
+  return {
+    code: item.code,
+    name: item.name,
+    market: item.market,
+    close: round(last.close, 2),
+    pe: item.pe,
+    pb: item.pb,
+    yieldPct: item.yieldPct,
+    roeEst: round(roeEst, 2),
+    valuationScore,
+    profitScore,
+    safetyScore,
+    growthScore,
+    totalScore,
+    valueTrapReasons,
+    fairLow: round(Math.min(fairLow, fairHigh), 2),
+    fairHigh: round(Math.max(fairLow, fairHigh), 2),
+    technicalEntry,
+    backtestReturn: backtestReturn === null ? null : round(backtestReturn, 2),
+  };
+}
+
+function calcValueBacktestReturn(bars) {
+  if (bars.length < 80) return null;
+  const startIndex = Math.max(60, bars.length - 60);
+  const entry = bars[startIndex]?.close;
+  const exit = bars.at(-1)?.close;
+  return entry && exit ? (exit - entry) / entry * 100 : null;
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, round(value, 1)));
+}
+
 async function mapLimit(items, limit, worker) {
   const results = [];
   let index = 0;
@@ -323,17 +415,23 @@ async function main() {
   await fs.mkdir(dataDir, { recursive: true });
 
   console.log('Fetching market snapshots...');
-  const [twseText, tpexText] = await Promise.all([
+  const [twseText, tpexText, valueTwseText, valueTpexText] = await Promise.all([
     fetchText(TWSE_URL),
     fetchText(TPEX_URL),
+    fetchText(VALUE_TWSE_URL),
+    fetchText(VALUE_TPEX_URL),
   ]);
   const twsePayload = normalizeTwsePayload(twseText);
   const tpexPayload = JSON.parse(tpexText);
+  const valueTwsePayload = JSON.parse(valueTwseText);
+  const valueTpexPayload = JSON.parse(valueTpexText);
 
   await fs.writeFile(path.join(dataDir, 'market-twse.json'), `${JSON.stringify(twsePayload)}\n`, 'utf8');
   await fs.writeFile(path.join(dataDir, 'market-tpex.json'), `${JSON.stringify(tpexPayload)}\n`, 'utf8');
 
-  const universe = [...parseTwse(twsePayload), ...parseTpex(tpexPayload)]
+  const fullUniverse = [...parseTwse(twsePayload), ...parseTpex(tpexPayload)];
+  const quoteMap = new Map(fullUniverse.map(stock => [stock.code, stock]));
+  const universe = fullUniverse
     .filter(stock => stock.volume >= 800)
     .sort((a, b) => b.volume - a.volume)
     .slice(0, DAILY_SCAN_LIMIT);
@@ -367,6 +465,22 @@ async function main() {
     candidates: results.map(item => item.maStack).filter(Boolean),
     history: maStackHistory,
   });
+
+  const valueBase = [...parseValueTwse(valueTwsePayload), ...parseValueTpex(valueTpexPayload)]
+    .map(item => ({ ...item, quote: quoteMap.get(item.code) }))
+    .filter(item => item.quote && item.quote.close > 0 && item.pe > 0 && item.pb > 0)
+    .sort((a, b) => b.quote.volume - a.quote.volume)
+    .slice(0, 260);
+  console.log(`Scoring ${valueBase.length} value candidates...`);
+  const valueRows = await mapLimit(valueBase, CONCURRENCY, async item => {
+    const bars = applyLiveBar(await fetchHistory(item.quote, '6mo'), item.quote);
+    return evaluateValueStock(item, bars);
+  });
+  await writeValueSnapshot({
+    dataDir,
+    scanned: valueBase.length,
+    rows: valueRows.filter(Boolean),
+  });
 }
 
 async function writeStrategySnapshot({ dataDir, filename, strategy, scanned, candidates, history }) {
@@ -382,6 +496,22 @@ async function writeStrategySnapshot({ dataDir, filename, strategy, scanned, can
   };
   await fs.writeFile(path.join(dataDir, filename), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   console.log(`Wrote ${filename}: ${shown.length} candidates: ${shown.map(item => `${item.code} ${item.name}`).join(', ') || 'none'}`);
+}
+
+async function writeValueSnapshot({ dataDir, scanned, rows }) {
+  const qualified = rows
+    .filter(item => item.totalScore >= 65 && item.valueTrapReasons.length <= 1)
+    .sort((a, b) => b.totalScore - a.totalScore || b.yieldPct - a.yieldPct)
+    .slice(0, 30);
+  const payload = {
+    date: todayText(),
+    strategy: 'value',
+    scanned,
+    generatedAt: new Date().toISOString(),
+    rows: qualified,
+  };
+  await fs.writeFile(path.join(dataDir, 'value-screener.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  console.log(`Wrote value-screener.json: ${qualified.length} rows: ${qualified.slice(0, 5).map(item => `${item.code} ${item.name}`).join(', ') || 'none'}`);
 }
 
 function sleep(ms) {

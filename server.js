@@ -8,6 +8,8 @@ const port = Number(process.env.PORT || 8787);
 const apiTargets = {
   '/api/twse': 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json',
   '/api/tpex': 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',
+  '/api/value-twse': 'https://www.twse.com.tw/exchangeReport/BWIBBU_ALL?response=json',
+  '/api/value-tpex': 'https://www.tpex.org.tw/web/stock/aftertrading/peratio_analysis/pera_result.php?l=zh-tw&o=json',
 };
 
 const mimeTypes = {

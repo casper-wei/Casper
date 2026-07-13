@@ -454,6 +454,107 @@ td.negative {
   margin-bottom: 12px;
 }
 
+.value-panel {
+  margin-bottom: 12px;
+}
+
+.value-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.value-actions button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(67, 209, 132, 0.52);
+  border-radius: 8px;
+  background: var(--green);
+  color: #04110a;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.value-actions span {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b1118;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.value-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.value-metrics div {
+  min-height: 78px;
+  padding: 12px;
+  border: 1px solid rgba(151, 166, 184, 0.14);
+  border-radius: 8px;
+  background: #0c131b;
+}
+
+.value-metrics small {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.value-metrics strong {
+  display: block;
+  font-size: 24px;
+}
+
+.value-table td {
+  vertical-align: top;
+}
+
+.value-table .stock-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.value-table .stock-cell b {
+  font-size: 14px;
+}
+
+.value-table .stock-cell small,
+.value-table .reason-cell {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.score-badge {
+  display: inline-flex;
+  min-width: 42px;
+  justify-content: center;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(90, 167, 255, 0.15);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.score-badge.is-good {
+  background: rgba(67, 209, 132, 0.15);
+  color: var(--green);
+}
+
+.score-badge.is-watch {
+  background: rgba(240, 200, 79, 0.15);
+  color: var(--yellow);
+}
+
 .chart-panel {
   margin-top: 12px;
   padding: 12px;
@@ -577,6 +678,7 @@ td.negative {
   .tool-grid,
   .tool-stack,
   .bt-metrics,
+  .value-metrics,
   .chart-stats {
     grid-template-columns: 1fr;
   }

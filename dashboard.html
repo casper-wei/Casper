@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Casper 交易工作台</title>
-  <link rel="stylesheet" href="dashboard.css?v=20260713c">
+  <link rel="stylesheet" href="dashboard.css?v=20260713d">
 </head>
 <body>
   <aside class="rail" aria-label="Casper dashboard navigation">
@@ -12,6 +12,7 @@
     <nav>
       <a class="active" href="#overview">總覽</a>
       <a href="#records">策略</a>
+      <a href="#value">低估</a>
       <a href="#risk">風控</a>
     </nav>
   </aside>
@@ -166,8 +167,50 @@
         </table>
       </div>
     </section>
+
+    <section id="value" class="value-panel tool-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Value</p>
+          <h2>台股低估值選股與個股評分</h2>
+        </div>
+        <div class="value-actions">
+          <button id="runValueScreener" type="button">執行低估值評分</button>
+          <span id="valueRunStatus">尚未執行</span>
+        </div>
+      </div>
+      <div class="value-metrics" id="valueMetrics">
+        <div><small>符合檔數</small><strong>--</strong></div>
+        <div><small>平均總分</small><strong>--</strong></div>
+        <div><small>高殖利率</small><strong>--</strong></div>
+        <div><small>價值陷阱</small><strong>--</strong></div>
+      </div>
+      <div class="table-wrap">
+        <table class="value-table">
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th>總分</th>
+              <th>PE</th>
+              <th>PB</th>
+              <th>ROE估</th>
+              <th>殖利率</th>
+              <th>財安</th>
+              <th>成長</th>
+              <th>合理價區間</th>
+              <th>技術進場</th>
+              <th>回測</th>
+              <th>判斷</th>
+            </tr>
+          </thead>
+          <tbody id="valueBody">
+            <tr><td colspan="12">按「執行低估值評分」產生名單。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
-  <script src="dashboard.js?v=20260713c"></script>
+  <script src="dashboard.js?v=20260713d"></script>
 </body>
 </html>
