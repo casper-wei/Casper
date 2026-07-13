@@ -81,7 +81,10 @@ function corsProxyUrl(url) {
 }
 
 async function fetchTextWithTimeout(url, timeoutMs = 10000) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  const response = await fetch(url, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.text();
 }

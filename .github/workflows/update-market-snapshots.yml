@@ -1,0 +1,42 @@
+name: Update market snapshots
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 18:30 Asia/Taipei. GitHub cron uses UTC.
+    - cron: '30 10 * * 1-5'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-market-snapshots
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate snapshots
+        run: node scripts/update-snapshots.js
+
+      - name: Commit updated snapshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/market-twse.json data/market-tpex.json data/daily-candidates-swing.json
+          if git diff --cached --quiet; then
+            echo "No snapshot changes."
+            exit 0
+          fi
+          git commit -m "Update market snapshots"
+          git push
