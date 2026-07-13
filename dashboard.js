@@ -613,7 +613,22 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
   const plotH = height - pad.top - pad.bottom;
   const xFor = index => pad.left + (validBars.length === 1 ? 0 : index / (validBars.length - 1) * plotW);
   const yFor = price => pad.top + (high - price) / (high - low) * plotH;
-  const closePath = validBars.map((bar, index) => `${index ? 'L' : 'M'} ${round(xFor(index), 2)} ${round(yFor(bar.close), 2)}`).join(' ');
+  const candleWidth = Math.max(2.2, Math.min(7, plotW / validBars.length * 0.58));
+  const candles = validBars.map((bar, index) => {
+    const x = xFor(index);
+    const openY = yFor(bar.open);
+    const closeY = yFor(bar.close);
+    const highY = yFor(bar.high);
+    const lowY = yFor(bar.low);
+    const topY = Math.min(openY, closeY);
+    const bodyHeight = Math.max(1.4, Math.abs(closeY - openY));
+    const up = bar.close >= bar.open;
+    const color = up ? '#ff6473' : '#43d184';
+    return `
+      <line x1="${round(x, 2)}" y1="${round(highY, 2)}" x2="${round(x, 2)}" y2="${round(lowY, 2)}" stroke="${color}" stroke-width="1.2" opacity="0.95" />
+      <rect x="${round(x - candleWidth / 2, 2)}" y="${round(topY, 2)}" width="${round(candleWidth, 2)}" height="${round(bodyHeight, 2)}" rx="0.8" fill="${color}" opacity="0.9" />
+    `;
+  }).join('');
   const last = validBars.at(-1);
   const first = validBars[0];
   const changePct = first.close ? (last.close - first.close) / first.close * 100 : 0;
@@ -638,12 +653,12 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${candidate.code} ${escapeHtml(candidate.name)} 近 6 個月走勢">
       <rect width="${width}" height="${height}" rx="8" fill="#0b1118" />
       ${grid}
-      <path d="${closePath}" fill="none" stroke="#5aa7ff" stroke-width="2.5" />
+      ${candles}
       ${line(candidate.entry, '買進', '#43d184')}
       ${line(candidate.stopLoss, '停損', '#ff6473')}
       ${line(candidate.takeProfit1, 'T1', '#f0c84f')}
       ${line(candidate.takeProfit2, 'T2', '#f0c84f')}
-      <circle cx="${round(xFor(validBars.length - 1), 2)}" cy="${round(yFor(last.close), 2)}" r="4" fill="#eef4f8" />
+      <circle cx="${round(xFor(validBars.length - 1), 2)}" cy="${round(yFor(last.close), 2)}" r="3.5" fill="#eef4f8" />
       <text x="${pad.left}" y="${height - 10}" fill="#97a6b8" font-size="12">${first.date}</text>
       <text x="${width - pad.right - 70}" y="${height - 10}" fill="#97a6b8" font-size="12">${last.date}</text>
     </svg>
