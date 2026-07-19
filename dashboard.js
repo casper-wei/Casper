@@ -252,22 +252,20 @@ async function refreshDashboard() {
   ]);
 
   if (twse.status === 'fulfilled') {
-    const rawRows = Array.isArray(twse.value?.data) ? twse.value.data.length : 0;
     const stocks = parseTwse(twse.value).length;
     const date = marketDate(twse.value);
     twseCount.textContent = stocks.toLocaleString('zh-TW');
-    twseStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜原始 ${rawRows.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
+    twseStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
   } else {
     twseCount.textContent = '失敗';
     twseStatus.textContent = '上市官方源暫時失敗';
   }
 
   if (tpex.status === 'fulfilled') {
-    const rawRows = parseTpexRows(tpex.value);
     const stocks = parseTpex(tpex.value).length;
     const date = marketDate(tpex.value);
     tpexCount.textContent = stocks.toLocaleString('zh-TW');
-    tpexStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜原始 ${rawRows.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
+    tpexStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
   } else {
     tpexCount.textContent = '失敗';
     tpexStatus.textContent = '上櫃官方源暫時失敗';
