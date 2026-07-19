@@ -171,10 +171,11 @@ function normalizeTwsePayload(text) {
   const trimmed = text.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return JSON.parse(trimmed);
   const lines = trimmed.split(/\r?\n/).filter(Boolean);
-  const data = lines.slice(1).map(parseCsvLine)
+  const rows = lines.slice(1).map(parseCsvLine).filter(row => row.length >= 11);
+  const data = rows
     .filter(row => row.length >= 11)
     .map(row => [row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10]]);
-  return { data };
+  return { data, date: rows[0]?.[0] || '' };
 }
 
 function marketUrls(localPath, officialUrl, options = {}) {
@@ -196,6 +197,12 @@ function parseTpexRows(payload) {
   if (Array.isArray(payload)) return payload.length;
   if (Array.isArray(payload?.data)) return payload.data.length;
   return 0;
+}
+
+function marketDate(payload) {
+  if (payload?.date) return String(payload.date);
+  const row = Array.isArray(payload) ? payload[0] : payload?.data?.[0];
+  return String(row?.Date || row?.date || '').trim();
 }
 
 async function loadStaticSwingCandidates() {
@@ -245,18 +252,22 @@ async function refreshDashboard() {
   ]);
 
   if (twse.status === 'fulfilled') {
-    const rows = Array.isArray(twse.value?.data) ? twse.value.data.length : 0;
-    twseCount.textContent = rows.toLocaleString('zh-TW');
-    twseStatus.textContent = rows ? '資料正常' : '無資料';
+    const rawRows = Array.isArray(twse.value?.data) ? twse.value.data.length : 0;
+    const stocks = parseTwse(twse.value).length;
+    const date = marketDate(twse.value);
+    twseCount.textContent = stocks.toLocaleString('zh-TW');
+    twseStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜原始 ${rawRows.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
   } else {
     twseCount.textContent = '失敗';
     twseStatus.textContent = '上市官方源暫時失敗';
   }
 
   if (tpex.status === 'fulfilled') {
-    const rows = parseTpexRows(tpex.value);
-    tpexCount.textContent = rows.toLocaleString('zh-TW');
-    tpexStatus.textContent = rows ? '資料正常' : '無資料';
+    const rawRows = parseTpexRows(tpex.value);
+    const stocks = parseTpex(tpex.value).length;
+    const date = marketDate(tpex.value);
+    tpexCount.textContent = stocks.toLocaleString('zh-TW');
+    tpexStatus.textContent = stocks ? `股票 ${stocks.toLocaleString('zh-TW')}｜原始 ${rawRows.toLocaleString('zh-TW')}｜日期 ${date || '--'}` : '無股票資料';
   } else {
     tpexCount.textContent = '失敗';
     tpexStatus.textContent = '上櫃官方源暫時失敗';

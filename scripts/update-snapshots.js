@@ -124,10 +124,11 @@ function normalizeTwsePayload(text) {
   const trimmed = text.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return JSON.parse(trimmed);
   const lines = trimmed.split(/\r?\n/).filter(Boolean);
-  const data = lines.slice(1).map(parseCsvLine)
+  const rows = lines.slice(1).map(parseCsvLine).filter(row => row.length >= 11);
+  const data = rows
     .filter(row => row.length >= 11)
     .map(row => [row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10]]);
-  return { data };
+  return { data, date: rows[0]?.[0] || '' };
 }
 
 function parseTwse(payload) {
