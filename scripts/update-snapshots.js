@@ -272,44 +272,39 @@ function evaluateSwing(stock, bars) {
 }
 
 function evaluateMaStack(stock, bars) {
-  if (bars.length < 80) return null;
+  if (bars.length < 25) return null;
   const last = bars.at(-1);
   const closes = bars.map(bar => bar.close);
+  const highs = bars.map(bar => bar.high);
   const lows = bars.map(bar => bar.low);
   const vols = bars.map(bar => bar.volume);
   const ma5 = calcMA(closes, 5);
   const ma10 = calcMA(closes, 10);
   const ma20 = calcMA(closes, 20);
-  const ma60 = calcMA(closes, 60);
-  const ma5Prev = calcMA(closes, 5, closes.length - 3);
-  const ma10Prev = calcMA(closes, 10, closes.length - 3);
-  const ma20Prev = calcMA(closes, 20, closes.length - 3);
-  if (![ma5, ma10, ma20, ma60, ma5Prev, ma10Prev, ma20Prev].every(Number.isFinite)) return null;
+  if (![ma5, ma10, ma20].every(Number.isFinite)) return null;
 
-  const { dif, dea } = calcMACD(closes);
-  const difNow = dif.at(-1);
-  const deaNow = dea.at(-1);
-  const difPrev = dif.at(-4);
-  if (![difNow, deaNow, difPrev].every(Number.isFinite)) return null;
-
-  const compressionWindow = [];
-  for (let end = closes.length - 26; end <= closes.length - 2; end += 1) {
-    const values = [calcMA(closes, 5, end), calcMA(closes, 10, end), calcMA(closes, 20, end), calcMA(closes, 60, end)];
+  const compressionSpreads = [];
+  for (let end = closes.length - 4; end <= closes.length; end += 1) {
+    const values = [calcMA(closes, 5, end), calcMA(closes, 10, end), calcMA(closes, 20, end)];
     if (!values.every(Number.isFinite)) continue;
-    compressionWindow.push((Math.max(...values) - Math.min(...values)) / values[3] * 100);
+    const close = closes[end - 1];
+    if (!close) continue;
+    compressionSpreads.push((Math.max(...values) - Math.min(...values)) / close * 100);
   }
-  const minCompression = minOf(compressionWindow);
-  const c1 = minCompression > 0 && minCompression <= 6;
-  const c2 = ma5 > ma10 && ma10 > ma20 && ma20 > ma60;
-  const c3 = difNow > 0 && deaNow > 0 && difNow >= difPrev;
-  const c4 = last.close > ma5 && ma5 > ma5Prev && ma10 > ma10Prev && ma20 >= ma20Prev;
-  const c5 = last.volume >= 800 && last.volume >= avg(vols.slice(-21, -1)) * 0.8;
-  if (!(c1 && c2 && c3 && c4 && c5)) return null;
+  const compressionDays = compressionSpreads.filter(spread => spread <= 2).length;
+  const recent20High = maxOf(highs.slice(-21, -1));
+  const avgVol20 = avg(vols.slice(-21, -1));
+  const volRatio = avgVol20 ? last.volume / avgVol20 : 0;
+  const c1 = compressionDays >= 3;
+  const c2 = last.close > ma5 && last.close > ma10 && last.close > ma20;
+  const c3 = recent20High > 0 && last.close > recent20High;
+  const c4 = avgVol20 > 0 && last.volume > avgVol20 * 1.5;
+  if (!(c1 && c2 && c3 && c4)) return null;
 
   const recent10Low = minOf(lows.slice(-10));
-  const stopBase = minOf([recent10Low, ma20, ma60]);
+  const stopBase = minOf([recent10Low, ma20]);
   const risk = Math.max(last.close - stopBase, last.close * 0.01);
-  const score = Math.round((c1 ? 25 : 0) + (c2 ? 30 : 0) + (c3 ? 25 : 0) + (c4 ? 10 : 0) + (c5 ? 10 : 0));
+  const score = Math.round((c1 ? 30 : 0) + (c2 ? 25 : 0) + (c3 ? 25 : 0) + (c4 ? 20 : 0));
   return {
     code: stock.code,
     name: stock.name,
@@ -322,7 +317,7 @@ function evaluateMaStack(stock, bars) {
     takeProfit2: round(last.close + risk * 2, 2),
     riskPct: round((risk / last.close) * 100, 2),
     score,
-    note: `糾結 ${round(minCompression, 1)}% / MACD>0`,
+    note: `糾結 ${compressionDays}/5｜突破20日高｜量 ${round(volRatio, 1)}x`,
   };
 }
 
