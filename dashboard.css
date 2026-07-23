@@ -97,7 +97,7 @@ select {
 .command-bar,
 .status-grid,
 .tool-grid,
-.records-table {
+.value-panel {
   max-width: 1680px;
   margin-right: auto;
   margin-left: auto;
@@ -150,8 +150,7 @@ h2 {
 .icon-button,
 .primary-action,
 .secondary-action,
-.command-bar button,
-.records-table button {
+.command-bar button {
   display: inline-flex;
   min-height: 38px;
   align-items: center;
@@ -183,8 +182,7 @@ h2 {
 }
 
 .secondary-action,
-.command-bar button:nth-of-type(2),
-.records-table button {
+.command-bar button:nth-of-type(2) {
   background: var(--panel-soft);
   color: var(--ink);
 }
@@ -286,14 +284,9 @@ h2 {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.45fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 12px;
-}
-
-.tool-stack {
-  display: grid;
-  gap: 12px;
 }
 
 .tool-panel {
@@ -394,64 +387,6 @@ td.negative {
 
 .negative {
   color: var(--red);
-}
-
-.risk-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  color: var(--muted);
-}
-
-.risk-list div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 36px;
-  align-items: center;
-  padding: 0 10px;
-  border: 1px solid rgba(151, 166, 184, 0.14);
-  border-radius: 8px;
-  background: #0c131b;
-}
-
-.risk-list dt,
-.risk-list dd {
-  margin: 0;
-}
-
-.risk-list dd {
-  color: var(--ink);
-  font-weight: 900;
-}
-
-.bt-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.bt-metrics div {
-  min-height: 82px;
-  padding: 12px;
-  border: 1px solid rgba(151, 166, 184, 0.14);
-  border-radius: 8px;
-  background: #0c131b;
-}
-
-.bt-metrics small {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--muted);
-}
-
-.bt-metrics strong {
-  display: block;
-  font-size: 24px;
-}
-
-.records-table {
-  margin-bottom: 12px;
 }
 
 .value-panel {
@@ -622,17 +557,7 @@ td.negative {
 }
 
 @media (max-width: 1120px) {
-  .status-grid,
-  .tool-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .candidates-panel {
-    grid-column: 1 / -1;
-  }
-
-  .tool-stack {
-    grid-column: 1 / -1;
+  .status-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -676,8 +601,6 @@ td.negative {
 
   .status-grid,
   .tool-grid,
-  .tool-stack,
-  .bt-metrics,
   .value-metrics,
   .chart-stats {
     grid-template-columns: 1fr;

@@ -1297,6 +1297,8 @@ function formatSigned(value) {
 function escapeHtml(s) {
     return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 }
+
+
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
 // ===== K-line Chart =====
@@ -1439,3 +1441,21 @@ function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function toggle(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
 function clearRefreshTimer() { if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; } }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

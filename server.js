@@ -79,9 +79,9 @@ function normalizeTwseStockDayAll(text) {
   const lines = trimmed.split(/\r?\n/).filter(Boolean);
   if (lines.length <= 1) return JSON.stringify({ data: [] });
 
-  const data = lines.slice(1).map(parseCsvLine)
+  const rows = lines.slice(1).map(parseCsvLine)
     .filter(row => row.length >= 11)
-    .map(row => [
+  const data = rows.map(row => [
       row[1], // code
       row[2], // name
       row[3], // trade volume
@@ -94,7 +94,7 @@ function normalizeTwseStockDayAll(text) {
       row[10], // transaction
     ]);
 
-  return JSON.stringify({ data });
+  return JSON.stringify({ data, date: rows[0]?.[0] || '' });
 }
 
 

@@ -4,16 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Casper 交易工作台</title>
-  <link rel="stylesheet" href="dashboard.css?v=20260720c">
+  <link rel="stylesheet" href="dashboard.css?v=20260723b">
 </head>
 <body>
   <aside class="rail" aria-label="Casper dashboard navigation">
     <a class="mark" href="#overview" aria-label="Casper Dashboard">C</a>
     <nav>
       <a class="active" href="#overview">總覽</a>
-      <a href="#records">策略</a>
-      <a href="#value">低估</a>
-      <a href="#risk">風控</a>
+      <a href="#records">選股</a>
+      <a href="#value">估值</a>
     </nav>
   </aside>
 
@@ -25,7 +24,7 @@
       </div>
       <div class="top-actions">
         <button id="refreshDashboard" class="icon-button" type="button" title="更新市場資料" aria-label="更新市場資料">↻</button>
-        <a class="secondary-action" href="#records">每日紀錄</a>
+        <a class="secondary-action" href="#value">低估值評分</a>
       </div>
     </header>
 
@@ -39,10 +38,8 @@
         </select>
       </label>
       <button id="runDailyStrategy" type="button">執行今日策略</button>
-      <button id="runQuickBacktest" type="button">快速回測</button>
       <div class="run-state">
         <span id="dailyRunStatus">尚未執行</span>
-        <span id="backtestRunStatus">尚未回測</span>
       </div>
     </section>
 
@@ -63,9 +60,9 @@
         <small>依成交量排序</small>
       </article>
       <article class="metric accent">
-        <span class="metric-label">資金模型</span>
-        <strong>100K</strong>
-        <small>單筆風險 1%</small>
+        <span class="metric-label">資料來源</span>
+        <strong>Local</strong>
+        <small>官方資料 + 歷史 K 線</small>
       </article>
     </section>
 
@@ -109,63 +106,6 @@
         </div>
       </article>
 
-      <aside class="tool-stack">
-        <article id="risk" class="tool-panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="eyebrow">Risk</p>
-              <h2>風控設定</h2>
-            </div>
-          </div>
-          <dl class="risk-list">
-            <div><dt>帳戶資金</dt><dd>100,000</dd></div>
-            <div><dt>單筆上限</dt><dd>20,000</dd></div>
-            <div><dt>單筆風險</dt><dd>1,000</dd></div>
-            <div><dt>停利節奏</dt><dd>1.5R / 2R</dd></div>
-          </dl>
-        </article>
-
-        <article class="tool-panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="eyebrow">Backtest</p>
-              <h2>快速回測</h2>
-            </div>
-          </div>
-          <div class="bt-metrics" id="quickBacktestMetrics">
-            <div><small>交易數</small><strong>--</strong></div>
-            <div><small>勝率</small><strong>--</strong></div>
-            <div><small>平均報酬</small><strong>--</strong></div>
-            <div><small>最大回撤</small><strong>--</strong></div>
-          </div>
-        </article>
-      </aside>
-    </section>
-
-    <section class="records-table tool-panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">Journal</p>
-          <h2>每日策略紀錄</h2>
-        </div>
-        <button id="clearDailyRecords" type="button">清除紀錄</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>日期</th>
-              <th>策略</th>
-              <th>候選數</th>
-              <th>前三名</th>
-              <th>資料狀態</th>
-            </tr>
-          </thead>
-          <tbody id="dailyRecordsBody">
-            <tr><td colspan="5">尚無紀錄。</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section id="value" class="value-panel tool-panel">
@@ -199,18 +139,17 @@
               <th>成長</th>
               <th>合理價區間</th>
               <th>技術進場</th>
-              <th>回測</th>
               <th>判斷</th>
             </tr>
           </thead>
           <tbody id="valueBody">
-            <tr><td colspan="12">按「執行低估值評分」產生名單。</td></tr>
+            <tr><td colspan="11">按「執行低估值評分」產生名單。</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </main>
 
-  <script src="dashboard.js?v=20260720c"></script>
+  <script src="dashboard.js?v=20260723b"></script>
 </body>
 </html>

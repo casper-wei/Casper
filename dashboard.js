@@ -5,13 +5,8 @@ const tpexStatus = document.getElementById('tpexStatus');
 const refreshButton = document.getElementById('refreshDashboard');
 const strategySelect = document.getElementById('strategySelect');
 const runDailyButton = document.getElementById('runDailyStrategy');
-const runBacktestButton = document.getElementById('runQuickBacktest');
-const clearRecordsButton = document.getElementById('clearDailyRecords');
 const dailyRunStatus = document.getElementById('dailyRunStatus');
-const backtestRunStatus = document.getElementById('backtestRunStatus');
 const dailyCandidatesBody = document.getElementById('dailyCandidatesBody');
-const dailyRecordsBody = document.getElementById('dailyRecordsBody');
-const quickBacktestMetrics = document.getElementById('quickBacktestMetrics');
 const chartTitle = document.getElementById('chartTitle');
 const chartMeta = document.getElementById('chartMeta');
 const priceChart = document.getElementById('priceChart');
@@ -20,10 +15,7 @@ const valueRunStatus = document.getElementById('valueRunStatus');
 const valueMetrics = document.getElementById('valueMetrics');
 const valueBody = document.getElementById('valueBody');
 
-const RECORD_KEY = 'casper.dailyStrategyRecords.v1';
 const DAILY_SCAN_LIMIT = 160;
-const BACKTEST_LIMIT = 80;
-const BACKTEST_HOLD_DAYS = 5;
 const LOCAL_API = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
 const TWSE_URL = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json';
 const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes';
@@ -103,6 +95,28 @@ function calcMACD(values) {
   ));
   const dea = calcEMA(dif.map(value => Number.isFinite(value) ? value : 0), 9);
   return { dif, dea };
+}
+
+function calcRSI(values, days = 8) {
+  const result = Array(values.length).fill(null);
+  if (values.length <= days) return result;
+  let gain = 0;
+  let loss = 0;
+  for (let index = 1; index <= days; index += 1) {
+    const change = values[index] - values[index - 1];
+    gain += Math.max(change, 0);
+    loss += Math.max(-change, 0);
+  }
+  let avgGain = gain / days;
+  let avgLoss = loss / days;
+  result[days] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  for (let index = days + 1; index < values.length; index += 1) {
+    const change = values[index] - values[index - 1];
+    avgGain = (avgGain * (days - 1) + Math.max(change, 0)) / days;
+    avgLoss = (avgLoss * (days - 1) + Math.max(-change, 0)) / days;
+    result[index] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  }
+  return result;
 }
 
 function maxOf(values) {
@@ -200,9 +214,22 @@ function parseTpexRows(payload) {
 }
 
 function marketDate(payload) {
-  if (payload?.date) return String(payload.date);
+  if (payload?.date) return formatMarketDate(payload.date);
   const row = Array.isArray(payload) ? payload[0] : payload?.data?.[0];
-  return String(row?.Date || row?.date || '').trim();
+  return formatMarketDate(row?.Date || row?.date || '');
+}
+
+function formatMarketDate(value) {
+  const text = String(value || '').trim();
+  const compactRoc = text.match(/^(\d{3})(\d{2})(\d{2})$/);
+  if (compactRoc) {
+    return `${Number(compactRoc[1]) + 1911}-${compactRoc[2]}-${compactRoc[3]}`;
+  }
+  const slashRoc = text.match(/^(\d{3})\/(\d{2})\/(\d{2})$/);
+  if (slashRoc) {
+    return `${Number(slashRoc[1]) + 1911}-${slashRoc[2]}-${slashRoc[3]}`;
+  }
+  return text;
 }
 
 async function loadStaticSwingCandidates() {
@@ -563,8 +590,6 @@ async function runDailyStrategy() {
       shown = fallback.candidates.slice(0, 12);
     }
     renderDailyCandidates(shown);
-    saveDailyRecord({ date: todayText(), strategy: mode, candidates: shown, scanned: fallback?.scanned || universe.length });
-    renderDailyRecords();
     dailyRunStatus.textContent = fallback
       ? `完成：${shown.length} 檔符合（GitHub 快照）`
       : `完成：${candidates.length} 檔符合`;
@@ -647,8 +672,11 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
   }
 
   const width = 760;
-  const height = 260;
-  const pad = { top: 18, right: 74, bottom: 32, left: 54 };
+  const height = 430;
+  const pad = { top: 18, right: 74, bottom: 26, left: 54 };
+  const priceArea = { top: 18, height: 210 };
+  const macdArea = { top: 258, height: 70 };
+  const rsiArea = { top: 352, height: 52 };
   const prices = validBars.flatMap(bar => [bar.high, bar.low, bar.close]).filter(Number.isFinite);
   prices.push(candidate.entry, candidate.stopLoss, candidate.takeProfit1, candidate.takeProfit2);
   const minPrice = Math.min(...prices);
@@ -657,10 +685,10 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
   const low = minPrice - spread * 0.12;
   const high = maxPrice + spread * 0.12;
   const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
   const xFor = index => pad.left + (validBars.length === 1 ? 0 : index / (validBars.length - 1) * plotW);
-  const yFor = price => pad.top + (high - price) / (high - low) * plotH;
+  const yFor = price => priceArea.top + (high - price) / (high - low) * priceArea.height;
   const candleWidth = Math.max(2.2, Math.min(7, plotW / validBars.length * 0.58));
+
   const candles = validBars.map((bar, index) => {
     const x = xFor(index);
     const openY = yFor(bar.open);
@@ -676,18 +704,19 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
       <rect x="${round(x - candleWidth / 2, 2)}" y="${round(topY, 2)}" width="${round(candleWidth, 2)}" height="${round(bodyHeight, 2)}" rx="0.8" fill="${color}" opacity="0.9" />
     `;
   }).join('');
+
   const last = validBars.at(-1);
   const first = validBars[0];
   const changePct = first.close ? (last.close - first.close) / first.close * 100 : 0;
-  const line = (value, label, color) => {
+  const guideLine = (value, label, color) => {
     const y = round(yFor(value), 2);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" stroke="${color}" stroke-width="1.5" stroke-dasharray="5 5" />
       <text x="${width - pad.right + 8}" y="${y + 4}" fill="${color}" font-size="12" font-weight="800">${label}</text>
     `;
   };
-  const grid = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
-    const y = pad.top + ratio * plotH;
+  const priceGrid = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
+    const y = priceArea.top + ratio * priceArea.height;
     const value = high - ratio * (high - low);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" stroke="rgba(151,166,184,.14)" />
@@ -695,17 +724,70 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
     `;
   }).join('');
 
+  const closes = validBars.map(bar => bar.close);
+  const { dif, dea } = calcMACD(closes);
+  const macdHist = dif.map((value, index) => (
+    Number.isFinite(value) && Number.isFinite(dea[index]) ? value - dea[index] : null
+  ));
+  const macdValues = [...dif, ...dea, ...macdHist].filter(Number.isFinite);
+  const macdAbs = Math.max(Math.abs(minOf(macdValues)), Math.abs(maxOf(macdValues)), 0.01);
+  const macdY = value => macdArea.top + (macdAbs - value) / (macdAbs * 2) * macdArea.height;
+  const macdZeroY = macdY(0);
+  const linePath = (values, yScale) => values
+    .map((value, index) => Number.isFinite(value) ? `${index ? 'L' : 'M'} ${round(xFor(index), 2)} ${round(yScale(value), 2)}` : '')
+    .filter(Boolean)
+    .join(' ');
+  const continuousPath = (values, yScale) => {
+    let started = false;
+    return values.map((value, index) => {
+      if (!Number.isFinite(value)) return '';
+      const command = started ? 'L' : 'M';
+      started = true;
+      return `${command} ${round(xFor(index), 2)} ${round(yScale(value), 2)}`;
+    }).filter(Boolean).join(' ');
+  };
+  const macdBars = macdHist.map((value, index) => {
+    if (!Number.isFinite(value)) return '';
+    const x = xFor(index);
+    const y = macdY(value);
+    const color = value >= 0 ? '#ff6473' : '#43d184';
+    return `<rect x="${round(x - candleWidth / 2, 2)}" y="${round(Math.min(y, macdZeroY), 2)}" width="${round(candleWidth, 2)}" height="${round(Math.max(1, Math.abs(y - macdZeroY)), 2)}" fill="${color}" opacity="0.55" />`;
+  }).join('');
+
+  const rsi = calcRSI(closes, 8);
+  const rsiY = value => rsiArea.top + (100 - value) / 100 * rsiArea.height;
+  const lastDif = dif.at(-1);
+  const lastDea = dea.at(-1);
+  const lastRsi = rsi.at(-1);
+  const indicators = `
+    <line x1="${pad.left}" y1="${macdArea.top}" x2="${width - pad.right}" y2="${macdArea.top}" stroke="rgba(151,166,184,.18)" />
+    <line x1="${pad.left}" y1="${round(macdZeroY, 2)}" x2="${width - pad.right}" y2="${round(macdZeroY, 2)}" stroke="rgba(151,166,184,.2)" />
+    <text x="8" y="${macdArea.top + 13}" fill="#97a6b8" font-size="11">MACD</text>
+    ${macdBars}
+    <path d="${linePath(dif, macdY)}" fill="none" stroke="#5aa7ff" stroke-width="1.5" />
+    <path d="${linePath(dea, macdY)}" fill="none" stroke="#f0c84f" stroke-width="1.4" />
+    <text x="${width - pad.right + 8}" y="${macdArea.top + 16}" fill="#5aa7ff" font-size="11">DIF ${Number.isFinite(lastDif) ? round(lastDif, 2) : '--'}</text>
+    <text x="${width - pad.right + 8}" y="${macdArea.top + 32}" fill="#f0c84f" font-size="11">DEA ${Number.isFinite(lastDea) ? round(lastDea, 2) : '--'}</text>
+    <line x1="${pad.left}" y1="${rsiArea.top}" x2="${width - pad.right}" y2="${rsiArea.top}" stroke="rgba(151,166,184,.18)" />
+    <line x1="${pad.left}" y1="${round(rsiY(70), 2)}" x2="${width - pad.right}" y2="${round(rsiY(70), 2)}" stroke="rgba(240,200,79,.28)" stroke-dasharray="4 4" />
+    <line x1="${pad.left}" y1="${round(rsiY(30), 2)}" x2="${width - pad.right}" y2="${round(rsiY(30), 2)}" stroke="rgba(67,209,132,.24)" stroke-dasharray="4 4" />
+    <path d="${continuousPath(rsi, rsiY)}" fill="none" stroke="#d7a2ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="8" y="${rsiArea.top + 13}" fill="#97a6b8" font-size="11">RSI</text>
+    <text x="${width - pad.right + 8}" y="${rsiArea.top + 17}" fill="#c88cff" font-size="11">${Number.isFinite(lastRsi) ? round(lastRsi, 1) : '--'}</text>
+  `;
+
   chartMeta.textContent = `${validBars.length} 根日 K｜${formatSigned(changePct)}%${sourceLabel ? `｜${sourceLabel}` : ''}`;
   priceChart.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${candidate.code} ${escapeHtml(candidate.name)} 近 6 個月走勢">
       <rect width="${width}" height="${height}" rx="8" fill="#0b1118" />
-      ${grid}
+      ${priceGrid}
       ${candles}
-      ${line(candidate.entry, '買進', '#43d184')}
-      ${line(candidate.stopLoss, '停損', '#ff6473')}
-      ${line(candidate.takeProfit1, 'T1', '#f0c84f')}
-      ${line(candidate.takeProfit2, 'T2', '#f0c84f')}
+      ${guideLine(candidate.entry, '買進', '#43d184')}
+      ${guideLine(candidate.stopLoss, '停損', '#ff6473')}
+      ${guideLine(candidate.takeProfit1, 'T1', '#f0c84f')}
+      ${guideLine(candidate.takeProfit2, 'T2', '#f0c84f')}
       <circle cx="${round(xFor(validBars.length - 1), 2)}" cy="${round(yFor(last.close), 2)}" r="3.5" fill="#eef4f8" />
+      ${indicators}
       <text x="${pad.left}" y="${height - 10}" fill="#97a6b8" font-size="12">${first.date}</text>
       <text x="${width - pad.right - 70}" y="${height - 10}" fill="#97a6b8" font-size="12">${last.date}</text>
     </svg>
@@ -717,50 +799,10 @@ function renderPriceChart(candidate, bars, sourceLabel = '') {
     </div>
   `;
 }
-
-function getRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(RECORD_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function saveDailyRecord(record) {
-  const records = getRecords();
-  const key = `${record.date}:${record.strategy}`;
-  const filtered = records.filter(item => `${item.date}:${item.strategy}` !== key);
-  filtered.unshift({
-    ...record,
-    savedAt: new Date().toISOString(),
-  });
-  localStorage.setItem(RECORD_KEY, JSON.stringify(filtered.slice(0, 90)));
-}
-
-function renderDailyRecords() {
-  const records = getRecords();
-  if (!records.length) {
-    dailyRecordsBody.innerHTML = '<tr><td colspan="5">尚無紀錄。</td></tr>';
-    return;
-  }
-  dailyRecordsBody.innerHTML = records.slice(0, 20).map(record => {
-    const top = (record.candidates || []).slice(0, 3).map(item => `${item.code} ${item.name}`).join('、') || '--';
-    return `
-      <tr>
-        <td>${record.date}</td>
-        <td>${strategyLabel(record.strategy)}</td>
-        <td>${record.candidates?.length || 0}</td>
-        <td>${escapeHtml(top)}</td>
-        <td>掃描 ${record.scanned || '--'} 檔</td>
-      </tr>
-    `;
-  }).join('');
-}
-
 async function runValueScreener() {
   runValueButton.disabled = true;
   valueRunStatus.textContent = LOCAL_API ? '取得估值資料...' : '讀取低估值快照...';
-  valueBody.innerHTML = '<tr><td colspan="12">低估值評分中...</td></tr>';
+  valueBody.innerHTML = '<tr><td colspan="11">低估值評分中...</td></tr>';
   renderValueMetrics(null);
 
   try {
@@ -791,7 +833,7 @@ async function runValueScreener() {
     valueRunStatus.textContent = `完成：${qualified.length} 檔符合`;
   } catch (error) {
     valueRunStatus.textContent = '執行失敗';
-    valueBody.innerHTML = `<tr><td colspan="12">低估值評分失敗：${escapeHtml(error.message || String(error))}</td></tr>`;
+    valueBody.innerHTML = `<tr><td colspan="11">低估值評分失敗：${escapeHtml(error.message || String(error))}</td></tr>`;
   } finally {
     runValueButton.disabled = false;
   }
@@ -834,7 +876,6 @@ function evaluateValueStock(item, bars) {
   const fairLow = Math.max(item.pb ? last.close * (1.05 / item.pb) : 0, item.pe ? last.close * (10 / item.pe) : 0);
   const fairHigh = Math.max(item.pb ? last.close * (1.45 / item.pb) : 0, item.pe ? last.close * (15 / item.pe) : 0);
   const technicalEntry = last.close > ma20 && ma20 > ma20Prev ? '站上20MA' : last.close > ma60 ? '等20MA轉強' : '等站回60MA';
-  const backtestReturn = calcValueBacktestReturn(bars);
   const totalScore = Math.round(valuationScore * 0.34 + profitScore * 0.24 + safetyScore * 0.22 + growthScore * 0.2);
 
   return {
@@ -855,21 +896,12 @@ function evaluateValueStock(item, bars) {
     fairLow: round(Math.min(fairLow, fairHigh), 2),
     fairHigh: round(Math.max(fairLow, fairHigh), 2),
     technicalEntry,
-    backtestReturn,
   };
-}
-
-function calcValueBacktestReturn(bars) {
-  if (bars.length < 80) return null;
-  const startIndex = Math.max(60, bars.length - 60);
-  const entry = bars[startIndex]?.close;
-  const exit = bars.at(-1)?.close;
-  return entry && exit ? (exit - entry) / entry * 100 : null;
 }
 
 function renderValueRows(rows) {
   if (!rows.length) {
-    valueBody.innerHTML = '<tr><td colspan="12">目前沒有符合條件的低估值股票。</td></tr>';
+    valueBody.innerHTML = '<tr><td colspan="11">目前沒有符合條件的低估值股票。</td></tr>';
     return;
   }
   valueBody.innerHTML = rows.map(item => {
@@ -886,7 +918,6 @@ function renderValueRows(rows) {
         <td>${item.growthScore}</td>
         <td>${item.fairLow.toFixed(2)} - ${item.fairHigh.toFixed(2)}</td>
         <td>${escapeHtml(item.technicalEntry)}</td>
-        <td>${item.backtestReturn === null ? '--' : `${formatSigned(item.backtestReturn)}%`}</td>
         <td class="reason-cell">${escapeHtml(judgment)}</td>
       </tr>
     `;
@@ -916,96 +947,6 @@ function formatMetric(value, digits = 1) {
   return Number.isFinite(value) && value > 0 ? round(value, digits).toFixed(digits) : '--';
 }
 
-async function runQuickBacktest() {
-  const mode = strategySelect.value;
-  runBacktestButton.disabled = true;
-  backtestRunStatus.textContent = '回測中...';
-  renderBacktestMetrics(null);
-
-  try {
-    const universe = (await loadUniverse()).slice(0, BACKTEST_LIMIT);
-    const trades = await mapLimit(universe, 8, async stock => {
-      const bars = await fetchHistory(stock, '6mo');
-      return backtestStock(stock, bars, mode);
-    }, (done, total) => {
-      backtestRunStatus.textContent = `回測 ${done} / ${total}`;
-    });
-    const flattened = trades.flat();
-    renderBacktestMetrics(calculateMetrics(flattened));
-    backtestRunStatus.textContent = `完成：${flattened.length} 筆訊號`;
-  } catch (error) {
-    backtestRunStatus.textContent = '回測失敗';
-    quickBacktestMetrics.innerHTML = `<div><small>錯誤</small><strong>${escapeHtml(error.message || String(error))}</strong></div>`;
-  } finally {
-    runBacktestButton.disabled = false;
-  }
-}
-
-function backtestStock(stock, bars, mode) {
-  const minBars = mode === 'breakout' ? 22 : (mode === 'maStack' ? 25 : 65);
-  if (bars.length < minBars + BACKTEST_HOLD_DAYS) return [];
-  const trades = [];
-  for (let i = minBars; i < bars.length - BACKTEST_HOLD_DAYS; i += 1) {
-    const windowBars = bars.slice(0, i + 1);
-    const signal = evaluateStrategy(stock, windowBars, mode);
-    if (!signal) continue;
-    const entry = bars[i];
-    const exit = bars[i + BACKTEST_HOLD_DAYS];
-    if (!entry.close || !exit.close) continue;
-    trades.push({
-      code: stock.code,
-      date: entry.date,
-      returnPct: ((exit.close - entry.close) / entry.close) * 100,
-    });
-  }
-  return trades;
-}
-
-function calculateMetrics(trades) {
-  if (!trades.length) return { count: 0, winRate: null, avgReturn: null, maxDrawdown: null };
-  const returns = trades.map(trade => trade.returnPct).filter(Number.isFinite);
-  const wins = returns.filter(value => value > 0);
-  const avgReturn = avg(returns);
-  const returnsByDate = new Map();
-  trades.forEach(trade => {
-    if (!Number.isFinite(trade.returnPct)) return;
-    const values = returnsByDate.get(trade.date) || [];
-    values.push(trade.returnPct);
-    returnsByDate.set(trade.date, values);
-  });
-  let equity = 1;
-  let peak = 1;
-  let maxDrawdown = 0;
-  [...returnsByDate.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([, values]) => {
-    equity *= 1 + avg(values) / 100;
-    peak = Math.max(peak, equity);
-    maxDrawdown = Math.min(maxDrawdown, (equity - peak) / peak * 100);
-  });
-  return {
-    count: returns.length,
-    winRate: returns.length ? wins.length / returns.length * 100 : null,
-    avgReturn,
-    maxDrawdown,
-  };
-}
-
-function renderBacktestMetrics(metrics) {
-  const values = metrics ? [
-    ['訊號數', String(metrics.count)],
-    ['勝率', metrics.winRate === null ? '--' : `${round(metrics.winRate, 1)}%`],
-    ['平均報酬', metrics.avgReturn === null ? '--' : `${formatSigned(metrics.avgReturn)}%`],
-    ['最大回撤', metrics.maxDrawdown === null ? '--' : `${round(metrics.maxDrawdown, 1)}%`],
-  ] : [
-    ['訊號數', '--'],
-    ['勝率', '--'],
-    ['平均報酬', '--'],
-    ['最大回撤', '--'],
-  ];
-  quickBacktestMetrics.innerHTML = values.map(([label, value]) => `
-    <div><small>${label}</small><strong>${value}</strong></div>
-  `).join('');
-}
-
 function formatSigned(value) {
   const rounded = round(value, 2);
   return `${rounded > 0 ? '+' : ''}${rounded}`;
@@ -1028,12 +969,7 @@ function escapeHtml(value) {
 
 refreshButton?.addEventListener('click', refreshDashboard);
 runDailyButton?.addEventListener('click', runDailyStrategy);
-runBacktestButton?.addEventListener('click', runQuickBacktest);
 runValueButton?.addEventListener('click', runValueScreener);
-clearRecordsButton?.addEventListener('click', () => {
-  localStorage.removeItem(RECORD_KEY);
-  renderDailyRecords();
-});
 dailyCandidatesBody?.addEventListener('click', event => {
   const row = event.target.closest('.candidate-row');
   if (!row) return;
@@ -1049,4 +985,3 @@ dailyCandidatesBody?.addEventListener('keydown', event => {
 });
 
 refreshDashboard();
-renderDailyRecords();
