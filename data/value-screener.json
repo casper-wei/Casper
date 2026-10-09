@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-09",
+  "date": "2026-10-10",
   "strategy": "value",
   "scanned": 260,
-  "generatedAt": "2026-10-08T17:29:19.751Z",
+  "generatedAt": "2026-10-09T17:07:27.620Z",
   "rows": [
     {
       "code": "6016",
@@ -22,7 +22,7 @@
       "fairLow": 76.52,
       "fairHigh": 114.78,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 6.5
+      "backtestReturn": 4.64
     },
     {
       "code": "6015",
@@ -42,7 +42,7 @@
       "fairLow": 43.73,
       "fairHigh": 65.6,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 8.04
+      "backtestReturn": 3.42
     },
     {
       "code": "2603",
@@ -62,7 +62,7 @@
       "fairLow": 271.25,
       "fairHigh": 378.25,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 19.54
+      "backtestReturn": 16.54
     },
     {
       "code": "9904",
@@ -82,7 +82,7 @@
       "fairLow": 67.44,
       "fairHigh": 93.13,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 4.16
+      "backtestReturn": 3.09
     },
     {
       "code": "9945",
@@ -102,13 +102,13 @@
       "fairLow": 60.17,
       "fairHigh": 85.8,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 15.28
+      "backtestReturn": 12.88
     },
     {
       "code": "4167",
       "name": "松瑞藥",
       "market": "上櫃",
-      "close": 20.45,
+      "close": 22,
       "pe": 6.63,
       "pb": 1.55,
       "yieldPct": 6.75,
@@ -119,10 +119,10 @@
       "growthScore": 100,
       "totalScore": 90,
       "valueTrapReasons": [],
-      "fairLow": 30.84,
-      "fairHigh": 46.27,
+      "fairLow": 33.18,
+      "fairHigh": 49.77,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 6.02
+      "backtestReturn": 10.31
     },
     {
       "code": "6005",
@@ -142,7 +142,7 @@
       "fairLow": 53.78,
       "fairHigh": 80.66,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 6.3
+      "backtestReturn": 5.37
     },
     {
       "code": "1409",
@@ -162,7 +162,7 @@
       "fairLow": 31.44,
       "fairHigh": 43.42,
       "technicalEntry": "站上20MA",
-      "backtestReturn": -1.33
+      "backtestReturn": 0.58
     },
     {
       "code": "1102",
@@ -182,7 +182,7 @@
       "fairLow": 54.53,
       "fairHigh": 75.3,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 6.29
+      "backtestReturn": 4.45
     },
     {
       "code": "2855",
@@ -202,7 +202,7 @@
       "fairLow": 96.22,
       "fairHigh": 144.33,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 25.62
+      "backtestReturn": 24.95
     },
     {
       "code": "8110",
@@ -222,7 +222,7 @@
       "fairLow": 54.48,
       "fairHigh": 81.72,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 2.82
+      "backtestReturn": -1.5
     },
     {
       "code": "2834",
@@ -242,7 +242,7 @@
       "fairLow": 16.66,
       "fairHigh": 23,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 5.79
+      "backtestReturn": 4.6
     },
     {
       "code": "4915",
@@ -262,7 +262,7 @@
       "fairLow": 49.49,
       "fairHigh": 74.24,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": -6.08
+      "backtestReturn": -6.22
     },
     {
       "code": "5876",
@@ -282,7 +282,7 @@
       "fairLow": 46.55,
       "fairHigh": 64.28,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 12.18
+      "backtestReturn": 12.44
     },
     {
       "code": "2609",
@@ -304,7 +304,7 @@
       "fairLow": 97.95,
       "fairHigh": 135.26,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 24.38
+      "backtestReturn": 18.92
     },
     {
       "code": "2027",
@@ -324,7 +324,7 @@
       "fairLow": 50.68,
       "fairHigh": 76.02,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 23.4
+      "backtestReturn": 16.83
     },
     {
       "code": "2605",
@@ -344,7 +344,7 @@
       "fairLow": 49,
       "fairHigh": 73.5,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 21.72
+      "backtestReturn": 15.96
     },
     {
       "code": "9933",
@@ -364,7 +364,7 @@
       "fairLow": 54.21,
       "fairHigh": 81.32,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 9.53
+      "backtestReturn": 7.92
     },
     {
       "code": "2504",
@@ -384,7 +384,7 @@
       "fairLow": 31.89,
       "fairHigh": 47.83,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 5.45
+      "backtestReturn": 2.9
     },
     {
       "code": "6901",
@@ -406,7 +406,7 @@
       "fairLow": 34.3,
       "fairHigh": 51.45,
       "technicalEntry": "站上20MA",
-      "backtestReturn": -5.85
+      "backtestReturn": -8.05
     },
     {
       "code": "2439",
@@ -426,7 +426,7 @@
       "fairLow": 71.12,
       "fairHigh": 98.21,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": -6.28
+      "backtestReturn": -6.39
     },
     {
       "code": "1402",
@@ -448,7 +448,7 @@
       "fairLow": 45.88,
       "fairHigh": 63.35,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 7.78
+      "backtestReturn": 3.09
     },
     {
       "code": "2615",
@@ -468,7 +468,7 @@
       "fairLow": 145.56,
       "fairHigh": 218.34,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 40.43
+      "backtestReturn": 36.47
     },
     {
       "code": "2883",
@@ -488,7 +488,7 @@
       "fairLow": 28.6,
       "fairHigh": 42.9,
       "technicalEntry": "等20MA轉強",
-      "backtestReturn": 27.29
+      "backtestReturn": 24.54
     },
     {
       "code": "5871",
@@ -510,7 +510,29 @@
       "fairLow": 108.21,
       "fairHigh": 162.31,
       "technicalEntry": "等站回60MA",
-      "backtestReturn": -8.81
+      "backtestReturn": -9.57
+    },
+    {
+      "code": "3709",
+      "name": "鑫聯大投控",
+      "market": "上櫃",
+      "close": 66.2,
+      "pe": 5.86,
+      "pb": 1.95,
+      "yieldPct": 3.26,
+      "roeEst": 33.28,
+      "valuationScore": 76,
+      "profitScore": 89,
+      "safetyScore": 92,
+      "growthScore": 64,
+      "totalScore": 80,
+      "valueTrapReasons": [
+        "長線仍偏弱"
+      ],
+      "fairLow": 112.97,
+      "fairHigh": 169.45,
+      "technicalEntry": "站上20MA",
+      "backtestReturn": -15.45
     },
     {
       "code": "1605",
@@ -532,7 +554,7 @@
       "fairLow": 48.3,
       "fairHigh": 66.7,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 17.59
+      "backtestReturn": 11.71
     },
     {
       "code": "2542",
@@ -554,7 +576,7 @@
       "fairLow": 43.2,
       "fairHigh": 64.8,
       "technicalEntry": "等站回60MA",
-      "backtestReturn": -10.02
+      "backtestReturn": -10.13
     },
     {
       "code": "2610",
@@ -576,7 +598,7 @@
       "fairLow": 21.6,
       "fairHigh": 32.4,
       "technicalEntry": "等站回60MA",
-      "backtestReturn": -1.23
+      "backtestReturn": -4.95
     },
     {
       "code": "2801",
@@ -596,27 +618,7 @@
       "fairLow": 20.52,
       "fairHigh": 28.34,
       "technicalEntry": "站上20MA",
-      "backtestReturn": 21.39
-    },
-    {
-      "code": "2812",
-      "name": "台中銀",
-      "market": "上市",
-      "close": 18.8,
-      "pe": 11.19,
-      "pb": 1.18,
-      "yieldPct": 5.64,
-      "roeEst": 10.55,
-      "valuationScore": 82,
-      "profitScore": 89,
-      "safetyScore": 100,
-      "growthScore": 32,
-      "totalScore": 78,
-      "valueTrapReasons": [],
-      "fairLow": 16.8,
-      "fairHigh": 25.2,
-      "technicalEntry": "等站回60MA",
-      "backtestReturn": -2.15
+      "backtestReturn": 20.63
     }
   ]
 }
