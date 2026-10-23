@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-22",
+  "date": "2026-10-23",
   "strategy": "value",
   "scanned": 260,
-  "generatedAt": "2026-10-22T15:28:22.451Z",
+  "generatedAt": "2026-10-23T15:20:53.846Z",
   "rows": [
     {
       "code": "9945",
@@ -477,6 +477,28 @@
       "backtestReturn": 13.5
     },
     {
+      "code": "2323",
+      "name": "中環",
+      "market": "上市",
+      "close": 11.65,
+      "pe": 3.84,
+      "pb": 0.63,
+      "yieldPct": 1.72,
+      "roeEst": 16.41,
+      "valuationScore": 100,
+      "profitScore": 73,
+      "safetyScore": 90,
+      "growthScore": 46,
+      "totalScore": 81,
+      "valueTrapReasons": [
+        "殖利率不足"
+      ],
+      "fairLow": 30.34,
+      "fairHigh": 45.51,
+      "technicalEntry": "等站回60MA",
+      "backtestReturn": 5.7
+    },
+    {
       "code": "5871",
       "name": "中租-KY",
       "market": "上市",
@@ -599,26 +621,6 @@
       "fairHigh": 38.99,
       "technicalEntry": "站上20MA",
       "backtestReturn": 4.23
-    },
-    {
-      "code": "5009",
-      "name": "榮剛",
-      "market": "上櫃",
-      "close": 33.95,
-      "pe": 16.17,
-      "pb": 1.09,
-      "yieldPct": 3.53,
-      "roeEst": 6.74,
-      "valuationScore": 70,
-      "profitScore": 50,
-      "safetyScore": 100,
-      "growthScore": 100,
-      "totalScore": 78,
-      "valueTrapReasons": [],
-      "fairLow": 32.7,
-      "fairHigh": 45.16,
-      "technicalEntry": "站上20MA",
-      "backtestReturn": 5.11
     }
   ]
 }
