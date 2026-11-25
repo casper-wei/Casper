@@ -1,20 +1,20 @@
 {
-  "date": "2026-11-25",
+  "date": "2026-11-26",
   "strategy": "swing",
   "scanned": 160,
-  "generatedAt": "2026-11-24T20:44:53.445Z",
+  "generatedAt": "2026-11-25T20:01:50.680Z",
   "candidates": [
     {
       "code": "2412",
       "name": "中華電",
       "market": "上市",
       "suffix": ".TW",
-      "date": "2026-11-23",
-      "entry": 164.5,
+      "date": "2026-11-24",
+      "entry": 163.5,
       "stopLoss": 160,
-      "takeProfit1": 171.25,
-      "takeProfit2": 173.5,
-      "riskPct": 2.74,
+      "takeProfit1": 168.75,
+      "takeProfit2": 170.5,
+      "riskPct": 2.14,
       "score": 82,
       "note": "命中 4/5"
     }
@@ -1015,11 +1015,19 @@
       },
       {
         "date": "2026-11-23",
-        "open": 162,
-        "high": 170.5,
-        "low": 160.5,
+        "open": 161.5,
+        "high": 166,
+        "low": 161.5,
         "close": 164.5,
-        "volume": 62074
+        "volume": 36516.659
+      },
+      {
+        "date": "2026-11-24",
+        "open": 163.5,
+        "high": 167,
+        "low": 163,
+        "close": 163.5,
+        "volume": 57385
       }
     ]
   }
